@@ -34,10 +34,10 @@ func CreateLoginHandler(userService *service.UserService) http.HandlerFunc {
 			return
 		}
 
-		_, err = userService.Authenticate(r.Context(), reqBody.Email, reqBody.Password)
+		_, err = userService.LogIn(r.Context(), reqBody.Email, reqBody.Password)
 		if err != nil {
 
-			if err == service.ErrInvalidCredentials || err == service.ErrUserNotFound {
+			if err == service.ErrInvalidCredentials {
 				writeJSONError(w, http.StatusBadRequest, "authentication failed")
 				return
 			}

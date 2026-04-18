@@ -1,3 +1,5 @@
+// Package service contains all business logic and validation for handlers.
+// Services are segmented by DB table.
 package service
 
 import (
@@ -19,7 +21,6 @@ var (
 	ErrEmailTaken         = errors.New("email already in use")
 	ErrInvalidEmail       = errors.New("email is not valid")
 	ErrPasswordHashing    = errors.New("password hashing not implemented")
-	ErrUserNotFound       = errors.New("user with email doesn't exist")
 	ErrInvalidCredentials = errors.New("invalid credentials")
 )
 
@@ -41,15 +42,27 @@ func NewUserService(queries UserQueries) *UserService {
 	return &UserService{queries: queries}
 }
 
-func (s *UserService) SignUp(ctx context.Context, input SignUpInput) (db.User, error) {
-	email := strings.TrimSpace(input.Email)
-	password := strings.TrimSpace(input.Password)
+func trimAndRequireValue(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", false
+	}
 
-	if email == "" || password == "" {
+	return trimmed, true
+}
+
+func (s *UserService) SignUp(ctx context.Context, input SignUpInput) (db.User, error) {
+	email, ok := trimAndRequireValue(input.Email)
+	if !ok {
 		return db.User{}, ErrInvalidSignUpInput
 	}
 
-	ok, email := utils.NormalizeAndValidateEmail(email)
+	password, ok := trimAndRequireValue(input.Password)
+	if !ok {
+		return db.User{}, ErrInvalidSignUpInput
+	}
+
+	ok, email = utils.NormalizeAndValidateEmail(email)
 	if !ok {
 		return db.User{}, ErrInvalidEmail
 	}
@@ -79,23 +92,31 @@ func (s *UserService) SignUp(ctx context.Context, input SignUpInput) (db.User, e
 	return user, nil
 }
 
-func (s *UserService) Authenticate(ctx context.Context, email string, password string) (db.User, error) {
-	email = strings.TrimSpace(email)
-	password = strings.TrimSpace(password)
-
-	if email == "" || password == "" {
+func (s *UserService) LogIn(ctx context.Context, email string, password string) (db.User, error) {
+	email, ok := trimAndRequireValue(email)
+	if !ok {
 		return db.User{}, ErrInvalidLogInInput
+	}
+
+	password, ok = trimAndRequireValue(password)
+	if !ok {
+		return db.User{}, ErrInvalidLogInInput
+	}
+
+	ok, email = utils.NormalizeAndValidateEmail(email)
+	if !ok {
+		return db.User{}, ErrInvalidEmail
 	}
 
 	user, err := s.queries.GetUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return db.User{}, ErrUserNotFound
+			return db.User{}, ErrInvalidCredentials
 		}
 		return db.User{}, err
 	}
 
-	ok, err := argon2.VerifyEncoded([]byte(password), []byte(user.PasswordHash))
+	ok, err = argon2.VerifyEncoded([]byte(password), []byte(user.PasswordHash))
 	if err != nil {
 		return db.User{}, err
 	}

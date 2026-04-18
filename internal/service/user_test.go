@@ -7,16 +7,24 @@ import (
 
 	"devinhadley/gobootstrapweb/internal/db"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/matthewhartstonge/argon2"
 )
 
-func TestUserService(t *testing.T) {
+func TestSignUp(t *testing.T) {
 	t.Run("user can sign up", testUserSignUp)
 	t.Run("sign up rejects blank email or password", testUserSignUpRejectsBlankEmailOrPassword)
 	t.Run("sign up rejects invalid email", testUserSignUpRejectsInvalidEmail)
 	t.Run("sign up normalizes and trims email", testUserSignUpNormalizesAndTrimsEmail)
 	t.Run("sign up returns email taken when email already exists", testUserSignUpEmailTaken)
+}
+
+func TestLogIn(t *testing.T) {
+	t.Run("user can log in", testUserLogIn)
+	t.Run("log in rejects blank email or password", testUserLogInRejectsBlankEmailOrPassword)
+	t.Run("log in returns invalid credentials when user does not exist", testUserLogInUserNotFound)
+	t.Run("log in returns invalid credentials for wrong password", testUserLogInWrongPassword)
 }
 
 func testUserSignUp(t *testing.T) {
@@ -163,12 +171,116 @@ func testUserSignUpEmailTaken(t *testing.T) {
 	}
 }
 
+func testUserLogIn(t *testing.T) {
+	ctx := context.Background()
+
+	id := int64(1)
+	email := "test@example.com"
+	password := "password"
+
+	argon := argon2.MemoryConstrainedDefaults()
+	passwordHash, err := argon.HashEncoded([]byte(password))
+	if err != nil {
+		t.Fatalf("failed to hash initial password: %v", err)
+	}
+
+	userService := setupUserService(t, MockUserQueries{
+		GetUserByEmailFn: func(ctx context.Context, email string) (db.User, error) {
+			return db.User{ID: id, Email: email, PasswordHash: string(passwordHash)}, nil
+		},
+	})
+
+	user, err := userService.LogIn(ctx, email, password)
+	if err != nil {
+		t.Fatalf("got error %v, expected nil", err)
+	}
+
+	if user.ID != id {
+		t.Fatalf("got id %v, expected %v", user.ID, id)
+	}
+
+	if user.Email != email {
+		t.Fatalf("got email %v, expected %v", user.Email, email)
+	}
+
+	if user.PasswordHash != string(passwordHash) {
+		t.Fatalf("got password hash %v, expected %v", user.PasswordHash, passwordHash)
+	}
+}
+
+func testUserLogInRejectsBlankEmailOrPassword(t *testing.T) {
+	ctx := context.Background()
+	userService := setupUserService(t, MockUserQueries{
+		GetUserByEmailFn: func(ctx context.Context, email string) (db.User, error) {
+			t.Fatal("GetUserByEmail should not be called for invalid log-in input")
+			return db.User{}, nil
+		},
+	})
+
+	testCases := []struct {
+		name     string
+		email    string
+		password string
+	}{
+		{name: "empty email", email: "", password: "example-password"},
+		{name: "whitespace email", email: "   ", password: "example-password"},
+		{name: "empty password", email: "test@example.com", password: ""},
+		{name: "whitespace password", email: "test@example.com", password: "   "},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := userService.LogIn(ctx, tc.email, tc.password)
+
+			if !errors.Is(err, ErrInvalidLogInInput) {
+				t.Fatalf("got error %v, want %v", err, ErrInvalidLogInInput)
+			}
+		})
+	}
+}
+
+func testUserLogInWrongPassword(t *testing.T) {
+	ctx := context.Background()
+
+	argon := argon2.MemoryConstrainedDefaults()
+	passwordHash, err := argon.HashEncoded([]byte("correct-password"))
+	if err != nil {
+		t.Fatalf("failed to hash initial password: %v", err)
+	}
+
+	userService := setupUserService(t, MockUserQueries{
+		GetUserByEmailFn: func(ctx context.Context, email string) (db.User, error) {
+			return db.User{ID: 1, Email: email, PasswordHash: string(passwordHash)}, nil
+		},
+	})
+
+	_, err = userService.LogIn(ctx, "test@example.com", "wrong-password")
+
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("got error %v, want %v", err, ErrInvalidCredentials)
+	}
+}
+
+func testUserLogInUserNotFound(t *testing.T) {
+	ctx := context.Background()
+	userService := setupUserService(t, MockUserQueries{
+		GetUserByEmailFn: func(ctx context.Context, email string) (db.User, error) {
+			return db.User{}, pgx.ErrNoRows
+		},
+	})
+
+	_, err := userService.LogIn(ctx, "test@example.com", "example-password")
+
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("got error %v, want %v", err, ErrInvalidCredentials)
+	}
+}
+
 func setupUserService(t *testing.T, mockedQueries MockUserQueries) *UserService {
 	t.Helper()
 	return NewUserService(&mockedQueries)
 }
 
-// Mocks...
 // Mocks...
 type MockUserQueries struct {
 	CreateUserFn     func(ctx context.Context, arg db.CreateUserParams) (db.User, error)
