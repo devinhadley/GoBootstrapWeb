@@ -3,10 +3,7 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
 	"os"
-
-	"devinhadley/gobootstrapweb/internal/db"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -30,18 +27,9 @@ func main() {
 	}
 	defer dbConPool.Close()
 
-	queries := db.New(dbConPool)
-
-	ctx := context.Background()
-
-	_, err = queries.CreateUser(ctx, db.CreateUserParams{
-		Username:     "Devin",
-		Email:        "devinhadley4@gmail.com",
-		PasswordHash: "a-poor-hash",
-	})
-	if err != nil {
-		log.Fatalf("Failed to create user!")
-	}
-
-	mux := http.NewServeMux()
+	// queries := db.New(dbConPool)
+	//
+	// ctx := context.Background()
+	//
+	// mux := http.NewServeMux()
 }

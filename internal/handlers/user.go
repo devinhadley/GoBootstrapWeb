@@ -34,7 +34,21 @@ func CreateLoginHandler(userService *service.UserService) http.HandlerFunc {
 			return
 		}
 
-		_, _ = userService.Authenticate(r.Context(), reqBody.Email, reqBody.Password)
-		// TODO: Set the session cookie.
+		_, err = userService.Authenticate(r.Context(), reqBody.Email, reqBody.Password)
+		if err != nil {
+
+			if err == service.ErrInvalidCredentials || err == service.ErrUserNotFound {
+				writeJSONError(w, http.StatusBadRequest, "authentication failed")
+				return
+			}
+
+			if err == service.ErrInvalidLogInInput {
+				writeJSONError(w, http.StatusBadRequest, "email and password may not be blank")
+				return
+			}
+
+		}
+
+		// Set session...
 	}
 }

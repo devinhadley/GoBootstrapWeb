@@ -21,8 +21,13 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 )
 
+type UserQueries interface {
+	CreateUser(ctx context.Context, arg db.CreateUserParams) (db.User, error)
+	GetUserByEmail(ctx context.Context, email string) (db.User, error)
+}
+
 type UserService struct {
-	queries *db.Queries
+	queries UserQueries
 }
 
 type SignUpInput struct {
@@ -30,7 +35,7 @@ type SignUpInput struct {
 	Password string
 }
 
-func NewUserService(queries *db.Queries) *UserService {
+func NewUserService(queries UserQueries) *UserService {
 	return &UserService{queries: queries}
 }
 
