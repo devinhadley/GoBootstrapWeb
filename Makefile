@@ -14,7 +14,7 @@ build: ## Build the app binary
 	@go build -o bin/app ./cmd
 
 test: ## Run all tests
-	@go test ./... -v
+	@go test ./...
 
 fmt: ## Format Go files
 	@go fmt ./...

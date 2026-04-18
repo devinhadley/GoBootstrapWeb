@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"devinhadley/gobootstrapweb/internal/db"
+	"devinhadley/gobootstrapweb/internal/utils"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -16,6 +17,7 @@ var (
 	ErrInvalidSignUpInput = errors.New("invalid sign-up input")
 	ErrInvalidLogInInput  = errors.New("invalid log-in input")
 	ErrEmailTaken         = errors.New("email already in use")
+	ErrInvalidEmail       = errors.New("email is not valid")
 	ErrPasswordHashing    = errors.New("password hashing not implemented")
 	ErrUserNotFound       = errors.New("user with email doesn't exist")
 	ErrInvalidCredentials = errors.New("invalid credentials")
@@ -45,6 +47,11 @@ func (s *UserService) SignUp(ctx context.Context, input SignUpInput) (db.User, e
 
 	if email == "" || password == "" {
 		return db.User{}, ErrInvalidSignUpInput
+	}
+
+	ok, email := utils.NormalizeAndValidateEmail(email)
+	if !ok {
+		return db.User{}, ErrInvalidEmail
 	}
 
 	argon := argon2.MemoryConstrainedDefaults()
