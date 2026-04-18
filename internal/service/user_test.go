@@ -7,6 +7,7 @@ import (
 
 	"devinhadley/gobootstrapweb/internal/db"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/matthewhartstonge/argon2"
 )
 
@@ -14,6 +15,8 @@ func TestUserService(t *testing.T) {
 	t.Run("user can sign up", testUserSignUp)
 	t.Run("sign up rejects blank email or password", testUserSignUpRejectsBlankEmailOrPassword)
 	t.Run("sign up rejects invalid email", testUserSignUpRejectsInvalidEmail)
+	t.Run("sign up normalizes and trims email", testUserSignUpNormalizesAndTrimsEmail)
+	t.Run("sign up returns email taken when email already exists", testUserSignUpEmailTaken)
 }
 
 func testUserSignUp(t *testing.T) {
@@ -104,6 +107,59 @@ func testUserSignUpRejectsInvalidEmail(t *testing.T) {
 				t.Fatalf("got error %v, want %v", err, ErrInvalidEmail)
 			}
 		})
+	}
+}
+
+func testUserSignUpNormalizesAndTrimsEmail(t *testing.T) {
+	ctx := context.Background()
+	inputEmail := "  User@Example.COM  "
+	expectedEmail := "User@example.com"
+
+	userService := setupUserService(t, MockUserQueries{
+		CreateUserFn: func(ctx context.Context, arg db.CreateUserParams) (db.User, error) {
+			if arg.Email != expectedEmail {
+				t.Fatalf("CreateUser got email %q, want %q", arg.Email, expectedEmail)
+			}
+
+			return db.User{
+				ID:           1,
+				Email:        arg.Email,
+				PasswordHash: arg.PasswordHash,
+			}, nil
+		},
+	})
+
+	user, err := userService.SignUp(ctx, SignUpInput{
+		Email:    inputEmail,
+		Password: "example-password",
+	})
+	if err != nil {
+		t.Fatalf("SignUp returned error: %v", err)
+	}
+
+	if user.Email != expectedEmail {
+		t.Fatalf("got email %q, want %q", user.Email, expectedEmail)
+	}
+}
+
+func testUserSignUpEmailTaken(t *testing.T) {
+	ctx := context.Background()
+	userService := setupUserService(t, MockUserQueries{
+		CreateUserFn: func(ctx context.Context, arg db.CreateUserParams) (db.User, error) {
+			return db.User{}, &pgconn.PgError{
+				Code:           "23505",
+				ConstraintName: "users_email_key",
+			}
+		},
+	})
+
+	_, err := userService.SignUp(ctx, SignUpInput{
+		Email:    "test@example.com",
+		Password: "example-password",
+	})
+
+	if !errors.Is(err, ErrEmailTaken) {
+		t.Fatalf("got error %v, want %v", err, ErrEmailTaken)
 	}
 }
 
