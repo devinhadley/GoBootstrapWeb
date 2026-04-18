@@ -12,6 +12,11 @@ type loginBody struct {
 	Password string `json:"password"`
 }
 
+type signUpBody struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
 type errorResponse struct {
 	Error string `json:"error"`
 }
@@ -50,5 +55,42 @@ func CreateLoginHandler(userService *service.UserService) http.HandlerFunc {
 		}
 
 		// Set session...
+	}
+}
+
+func CreateSignUpHandler(userService *service.UserService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var reqBody signUpBody
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+
+		err := decoder.Decode(&reqBody)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+
+		_, err = userService.SignUp(r.Context(), service.SignUpInput{
+			Email:    reqBody.Email,
+			Password: reqBody.Password,
+		})
+		if err != nil {
+			if err == service.ErrInvalidSignUpInput {
+				writeJSONError(w, http.StatusBadRequest, "email and password may not be blank")
+				return
+			}
+
+			if err == service.ErrInvalidEmail {
+				writeJSONError(w, http.StatusBadRequest, "email is not valid")
+				return
+			}
+
+			if err == service.ErrEmailTaken {
+				writeJSONError(w, http.StatusBadRequest, "email already in use")
+				return
+			}
+		}
+
+		w.WriteHeader(http.StatusOK)
 	}
 }
