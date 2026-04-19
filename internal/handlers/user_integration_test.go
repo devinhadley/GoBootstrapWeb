@@ -184,7 +184,7 @@ func testSignUpRejectsInvalidEmail(t *testing.T) {
 func testLogInSucceeds(t *testing.T) {
 	deps := setupUserIntegrationDeps(t)
 
-	_, err := deps.userService.SignUp(context.Background(), service.SignUpInput{
+	_, err := deps.userService.SignUp(context.Background(), service.AuthenticateBody{
 		Email:    "test@example.com",
 		Password: "example-password",
 	})
@@ -256,7 +256,7 @@ func testLogInReturnsBadRequestWhenUserDoesNotExist(t *testing.T) {
 func testLogInReturnsBadRequestWhenPasswordIsIncorrect(t *testing.T) {
 	deps := setupUserIntegrationDeps(t)
 
-	_, err := deps.userService.SignUp(context.Background(), service.SignUpInput{
+	_, err := deps.userService.SignUp(context.Background(), service.AuthenticateBody{
 		Email:    "wrong-password@example.com",
 		Password: "correct-password",
 	})

@@ -9,19 +9,9 @@ import (
 	"devinhadley/gobootstrapweb/internal/utils"
 )
 
-type loginBody struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-type signUpBody struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
 func CreateSignUpHandler(userService *service.UserService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var reqBody signUpBody
+		var reqBody service.AuthenticateBody
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 
@@ -31,7 +21,7 @@ func CreateSignUpHandler(userService *service.UserService) http.HandlerFunc {
 			return
 		}
 
-		_, err = userService.SignUp(r.Context(), service.SignUpInput{
+		_, err = userService.SignUp(r.Context(), service.AuthenticateBody{
 			Email:    reqBody.Email,
 			Password: reqBody.Password,
 		})
@@ -62,7 +52,7 @@ func CreateSignUpHandler(userService *service.UserService) http.HandlerFunc {
 
 func CreateLoginHandler(userService *service.UserService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var reqBody loginBody
+		var reqBody service.AuthenticateBody
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 
@@ -72,7 +62,10 @@ func CreateLoginHandler(userService *service.UserService) http.HandlerFunc {
 			return
 		}
 
-		_, err = userService.LogIn(r.Context(), reqBody.Email, reqBody.Password)
+		_, err = userService.LogIn(r.Context(), service.AuthenticateBody{
+			Email:    reqBody.Email,
+			Password: reqBody.Password,
+		})
 		if err != nil {
 
 			if errors.Is(err, service.ErrInvalidCredentials) {

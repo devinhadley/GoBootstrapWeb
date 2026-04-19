@@ -34,7 +34,7 @@ func testUserSignUp(t *testing.T) {
 	userService := setupUserService(t, MockUserQueries{})
 	ctx := context.Background()
 
-	input := SignUpInput{
+	input := AuthenticateBody{
 		Email:    "test@example.com",
 		Password: "example-password",
 	}
@@ -79,7 +79,7 @@ func testUserSignUpRejectsBlankEmailOrPassword(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := userService.SignUp(ctx, SignUpInput{
+			_, err := userService.SignUp(ctx, AuthenticateBody{
 				Email:    tc.email,
 				Password: tc.password,
 			})
@@ -109,7 +109,7 @@ func testUserSignUpRejectsInvalidEmail(t *testing.T) {
 
 	for _, email := range testCases {
 		t.Run(email, func(t *testing.T) {
-			_, err := userService.SignUp(ctx, SignUpInput{
+			_, err := userService.SignUp(ctx, AuthenticateBody{
 				Email:    email,
 				Password: "example-password",
 			})
@@ -140,7 +140,7 @@ func testUserSignUpNormalizesAndTrimsEmail(t *testing.T) {
 		},
 	})
 
-	user, err := userService.SignUp(ctx, SignUpInput{
+	user, err := userService.SignUp(ctx, AuthenticateBody{
 		Email:    inputEmail,
 		Password: "example-password",
 	})
@@ -164,7 +164,7 @@ func testUserSignUpEmailTaken(t *testing.T) {
 		},
 	})
 
-	_, err := userService.SignUp(ctx, SignUpInput{
+	_, err := userService.SignUp(ctx, AuthenticateBody{
 		Email:    "test@example.com",
 		Password: "example-password",
 	})
@@ -184,7 +184,7 @@ func testUserSignUpPropagatesUnexpectedError(t *testing.T) {
 		},
 	})
 
-	_, err := userService.SignUp(ctx, SignUpInput{
+	_, err := userService.SignUp(ctx, AuthenticateBody{
 		Email:    "test@example.com",
 		Password: "example-password",
 	})
@@ -213,7 +213,10 @@ func testUserLogIn(t *testing.T) {
 		},
 	})
 
-	user, err := userService.LogIn(ctx, email, password)
+	user, err := userService.LogIn(ctx, AuthenticateBody{
+		Email:    email,
+		Password: password,
+	})
 	if err != nil {
 		t.Fatalf("got error %v, expected nil", err)
 	}
@@ -253,7 +256,10 @@ func testUserLogInRejectsBlankEmailOrPassword(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := userService.LogIn(ctx, tc.email, tc.password)
+			_, err := userService.LogIn(ctx, AuthenticateBody{
+				Email:    tc.email,
+				Password: tc.password,
+			})
 
 			if !errors.Is(err, ErrInvalidLogInInput) {
 				t.Fatalf("got error %v, want %v", err, ErrInvalidLogInInput)
@@ -277,7 +283,10 @@ func testUserLogInWrongPassword(t *testing.T) {
 		},
 	})
 
-	_, err = userService.LogIn(ctx, "test@example.com", "wrong-password")
+	_, err = userService.LogIn(ctx, AuthenticateBody{
+		Email:    "test@example.com",
+		Password: "wrong-password",
+	})
 
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("got error %v, want %v", err, ErrInvalidCredentials)
@@ -293,7 +302,10 @@ func testUserLogInRejectsInvalidEmail(t *testing.T) {
 		},
 	})
 
-	_, err := userService.LogIn(ctx, "invalid", "example-password")
+	_, err := userService.LogIn(ctx, AuthenticateBody{
+		Email:    "invalid",
+		Password: "example-password",
+	})
 
 	if !errors.Is(err, ErrInvalidEmail) {
 		t.Fatalf("got error %v, want %v", err, ErrInvalidEmail)
@@ -308,7 +320,10 @@ func testUserLogInUserNotFound(t *testing.T) {
 		},
 	})
 
-	_, err := userService.LogIn(ctx, "test@example.com", "example-password")
+	_, err := userService.LogIn(ctx, AuthenticateBody{
+		Email:    "test@example.com",
+		Password: "example-password",
+	})
 
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("got error %v, want %v", err, ErrInvalidCredentials)
@@ -325,7 +340,10 @@ func testUserLogInPropagatesUnexpectedError(t *testing.T) {
 		},
 	})
 
-	_, err := userService.LogIn(ctx, "test@example.com", "example-password")
+	_, err := userService.LogIn(ctx, AuthenticateBody{
+		Email:    "test@example.com",
+		Password: "example-password",
+	})
 
 	if !errors.Is(err, expectedErr) {
 		t.Fatalf("got error %v, want %v", err, expectedErr)

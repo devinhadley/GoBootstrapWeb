@@ -33,9 +33,9 @@ type UserService struct {
 	queries UserQueries
 }
 
-type SignUpInput struct {
-	Email    string
-	Password string
+type AuthenticateBody struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 func NewUserService(queries UserQueries) *UserService {
@@ -51,7 +51,7 @@ func trimAndRequireValue(value string) (string, bool) {
 	return trimmed, true
 }
 
-func (s *UserService) SignUp(ctx context.Context, input SignUpInput) (db.User, error) {
+func (s *UserService) SignUp(ctx context.Context, input AuthenticateBody) (db.User, error) {
 	email, ok := trimAndRequireValue(input.Email)
 	if !ok {
 		return db.User{}, ErrInvalidSignUpInput
@@ -92,13 +92,13 @@ func (s *UserService) SignUp(ctx context.Context, input SignUpInput) (db.User, e
 	return user, nil
 }
 
-func (s *UserService) LogIn(ctx context.Context, email string, password string) (db.User, error) {
-	email, ok := trimAndRequireValue(email)
+func (s *UserService) LogIn(ctx context.Context, input AuthenticateBody) (db.User, error) {
+	email, ok := trimAndRequireValue(input.Email)
 	if !ok {
 		return db.User{}, ErrInvalidLogInInput
 	}
 
-	password, ok = trimAndRequireValue(password)
+	password, ok := trimAndRequireValue(input.Password)
 	if !ok {
 		return db.User{}, ErrInvalidLogInInput
 	}
