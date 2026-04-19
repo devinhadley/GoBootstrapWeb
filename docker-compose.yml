@@ -12,5 +12,16 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  postgres_integration_test:
+    image: postgres:17
+    container_name: postgres_integration_test
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gobootstrapweb_test
+      POSTGRES_USER: integration_user
+      POSTGRES_PASSWORD: integration_password
+    ports:
+      - "5433:5432"
+
 volumes:
   postgres_data:

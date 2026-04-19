@@ -27,10 +27,18 @@ type userIntegrationDeps struct {
 }
 
 func TestSignUpIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration tests in short mode")
+	}
+
 	t.Run("sign up succeeds and persists user", testSignUpSucceedsAndPersistsUser)
 }
 
 func TestLogInIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration tests in short mode")
+	}
+
 	t.Run("login succeeds with valid credentials", testLogInSucceeds)
 	t.Run("returns bad request when user does not exist", testLogInReturnsBadRequestWhenUserDoesNotExist)
 }
@@ -147,13 +155,13 @@ func setupUserIntegrationDeps(t *testing.T) userIntegrationDeps {
 		t.Fatalf("failed to ping database: %v", err)
 	}
 
-	queries := db.New(pool)
-	userService := service.NewUserService(queries)
-
 	t.Cleanup(func() {
 		cleanupIntegrationTables(t, pool)
 		pool.Close()
 	})
+
+	queries := db.New(pool)
+	userService := service.NewUserService(queries)
 
 	return userIntegrationDeps{
 		pool:        pool,
@@ -167,14 +175,10 @@ func setupUserIntegrationDeps(t *testing.T) userIntegrationDeps {
 func cleanupIntegrationTables(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
-	_, err := pool.Exec(context.Background(), "TRUNCATE TABLE sessions RESTART IDENTITY")
+	// Clears tables between tests.
+	_, err := pool.Exec(context.Background(), "TRUNCATE TABLE sessions, users RESTART IDENTITY")
 	if err != nil {
-		t.Fatalf("failed to clean sessions table: %v", err)
-	}
-
-	_, err = pool.Exec(context.Background(), "TRUNCATE TABLE users RESTART IDENTITY")
-	if err != nil {
-		t.Fatalf("failed to clean users table: %v", err)
+		t.Fatalf("failed to clean integration tables: %v", err)
 	}
 }
 
