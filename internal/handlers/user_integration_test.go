@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"devinhadley/gobootstrapweb/internal/db"
 	"devinhadley/gobootstrapweb/internal/service"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/matthewhartstonge/argon2"
 )
@@ -32,6 +34,8 @@ func TestSignUpIntegration(t *testing.T) {
 	}
 
 	t.Run("sign up succeeds and persists user", testSignUpSucceedsAndPersistsUser)
+	t.Run("duplicate email returns bad request and does not create second user", testSignUpDuplicateEmail)
+	t.Run("blank email or password returns bad request and does not persist user", testSignUpRejectsBlankEmailOrPassword)
 }
 
 func TestLogInIntegration(t *testing.T) {
@@ -39,8 +43,10 @@ func TestLogInIntegration(t *testing.T) {
 		t.Skip("skipping integration tests in short mode")
 	}
 
+	t.Run("login rejects invalid email", testLogInRejectsInvalidEmail)
 	t.Run("login succeeds with valid credentials", testLogInSucceeds)
 	t.Run("returns bad request when user does not exist", testLogInReturnsBadRequestWhenUserDoesNotExist)
+	t.Run("returns bad request when password is incorrect", testLogInReturnsBadRequestWhenPasswordIsIncorrect)
 }
 
 func testSignUpSucceedsAndPersistsUser(t *testing.T) {
@@ -76,6 +82,77 @@ func testSignUpSucceedsAndPersistsUser(t *testing.T) {
 
 	if !ok {
 		t.Fatal("stored password hash does not match input password")
+	}
+}
+
+func testSignUpDuplicateEmail(t *testing.T) {
+	deps := setupUserIntegrationDeps(t)
+
+	input := map[string]string{
+		"email":    "duplicate@example.com",
+		"password": "example-password",
+	}
+
+	first := performJSONRequest(deps.signUp, http.MethodPost, "/signup", input)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first sign up got status %d, want %d", first.Code, http.StatusOK)
+	}
+
+	second := performJSONRequest(deps.signUp, http.MethodPost, "/signup", input)
+	if second.Code != http.StatusBadRequest {
+		t.Fatalf("second sign up got status %d, want %d", second.Code, http.StatusBadRequest)
+	}
+
+	gotErr := decodeErrorResponse(t, second)
+	if gotErr.Error != "email already in use" {
+		t.Fatalf("got error %q, want %q", gotErr.Error, "email already in use")
+	}
+
+	userCount := countUsersByEmail(t, deps.pool, input["email"])
+	if userCount != 1 {
+		t.Fatalf("got %d users for email %q, want 1", userCount, input["email"])
+	}
+}
+
+func testSignUpRejectsBlankEmailOrPassword(t *testing.T) {
+	testCases := []struct {
+		name        string
+		email       string
+		password    string
+		assertEmail string
+	}{
+		{name: "blank email", email: "", password: "example-password", assertEmail: ""},
+		{name: "blank password", email: "blank-password@example.com", password: "", assertEmail: "blank-password@example.com"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			deps := setupUserIntegrationDeps(t)
+
+			rec := performJSONRequest(deps.signUp, http.MethodPost, "/signup", map[string]string{
+				"email":    tc.email,
+				"password": tc.password,
+			})
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("got status %d, want %d", rec.Code, http.StatusBadRequest)
+			}
+
+			gotErr := decodeErrorResponse(t, rec)
+			if gotErr.Error != "email and password may not be blank" {
+				t.Fatalf("got error %q, want %q", gotErr.Error, "email and password may not be blank")
+			}
+
+			if tc.assertEmail == "" {
+				userCount := countUsers(t, deps.pool)
+				if userCount != 0 {
+					t.Fatalf("got %d users in database, want 0", userCount)
+				}
+				return
+			}
+
+			assertNoUserWithEmail(t, deps.queries, tc.assertEmail)
+		})
 	}
 }
 
@@ -115,6 +192,24 @@ func testLogInSucceeds(t *testing.T) {
 	// TODO: Assert session created.
 }
 
+func testLogInRejectsInvalidEmail(t *testing.T) {
+	deps := setupUserIntegrationDeps(t)
+
+	rec := performJSONRequest(deps.login, http.MethodPost, "/login", map[string]string{
+		"email":    "invalid",
+		"password": "example-password",
+	})
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	gotErr := decodeErrorResponse(t, rec)
+	if gotErr.Error != "email is not valid" {
+		t.Fatalf("got error %q, want %q", gotErr.Error, "email is not valid")
+	}
+}
+
 func testLogInReturnsBadRequestWhenUserDoesNotExist(t *testing.T) {
 	deps := setupUserIntegrationDeps(t)
 
@@ -127,13 +222,35 @@ func testLogInReturnsBadRequestWhenUserDoesNotExist(t *testing.T) {
 		t.Fatalf("got status %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 
-	var got errorResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
+	gotErr := decodeErrorResponse(t, rec)
+	if gotErr.Error != "authentication failed" {
+		t.Fatalf("got error %q, want %q", gotErr.Error, "authentication failed")
+	}
+}
+
+func testLogInReturnsBadRequestWhenPasswordIsIncorrect(t *testing.T) {
+	deps := setupUserIntegrationDeps(t)
+
+	_, err := deps.userService.SignUp(context.Background(), service.SignUpInput{
+		Email:    "wrong-password@example.com",
+		Password: "correct-password",
+	})
+	if err != nil {
+		t.Fatalf("failed to seed user: %v", err)
 	}
 
-	if got.Error != "authentication failed" {
-		t.Fatalf("got error %q, want %q", got.Error, "authentication failed")
+	rec := performJSONRequest(deps.login, http.MethodPost, "/login", map[string]string{
+		"email":    "wrong-password@example.com",
+		"password": "incorrect-password",
+	})
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	gotErr := decodeErrorResponse(t, rec)
+	if gotErr.Error != "authentication failed" {
+		t.Fatalf("got error %q, want %q", gotErr.Error, "authentication failed")
 	}
 }
 
@@ -191,4 +308,52 @@ func performJSONRequest(handler http.Handler, method string, path string, body a
 	handler.ServeHTTP(rec, req)
 
 	return rec
+}
+
+type apiErrorResponse struct {
+	Error string `json:"error"`
+}
+
+func decodeErrorResponse(t *testing.T, rec *httptest.ResponseRecorder) apiErrorResponse {
+	t.Helper()
+
+	var got apiErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+
+	return got
+}
+
+func assertNoUserWithEmail(t *testing.T, queries *db.Queries, email string) {
+	t.Helper()
+
+	_, err := queries.GetUserByEmail(context.Background(), email)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expected no user with email %q, got err %v", email, err)
+	}
+}
+
+func countUsersByEmail(t *testing.T, pool *pgxpool.Pool, email string) int {
+	t.Helper()
+
+	var count int
+	err := pool.QueryRow(context.Background(), "SELECT COUNT(*) FROM users WHERE email = $1", email).Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count users by email: %v", err)
+	}
+
+	return count
+}
+
+func countUsers(t *testing.T, pool *pgxpool.Pool) int {
+	t.Helper()
+
+	var count int
+	err := pool.QueryRow(context.Background(), "SELECT COUNT(*) FROM users").Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count users: %v", err)
+	}
+
+	return count
 }

@@ -2,9 +2,11 @@ package handlers // handlers are http endpoints.
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"devinhadley/gobootstrapweb/internal/service"
+	"devinhadley/gobootstrapweb/internal/utils"
 )
 
 type loginBody struct {
@@ -17,16 +19,6 @@ type signUpBody struct {
 	Password string `json:"password"`
 }
 
-type errorResponse struct {
-	Error string `json:"error"`
-}
-
-func writeJSONError(w http.ResponseWriter, statusCode int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(errorResponse{Error: message})
-}
-
 func CreateLoginHandler(userService *service.UserService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var reqBody loginBody
@@ -35,26 +27,35 @@ func CreateLoginHandler(userService *service.UserService) http.HandlerFunc {
 
 		err := decoder.Decode(&reqBody)
 		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+			utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
 			return
 		}
 
 		_, err = userService.LogIn(r.Context(), reqBody.Email, reqBody.Password)
 		if err != nil {
 
-			if err == service.ErrInvalidCredentials {
-				writeJSONError(w, http.StatusBadRequest, "authentication failed")
+			if errors.Is(err, service.ErrInvalidCredentials) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "authentication failed"})
 				return
 			}
 
-			if err == service.ErrInvalidLogInInput {
-				writeJSONError(w, http.StatusBadRequest, "email and password may not be blank")
+			if errors.Is(err, service.ErrInvalidLogInInput) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "email and password may not be blank"})
 				return
 			}
+
+			if errors.Is(err, service.ErrInvalidEmail) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "email is not valid"})
+				return
+			}
+
+			utils.WriteAndReportInternalError(w)
+			return
 
 		}
 
 		// Set session...
+		w.WriteHeader(http.StatusOK)
 	}
 }
 
@@ -66,7 +67,7 @@ func CreateSignUpHandler(userService *service.UserService) http.HandlerFunc {
 
 		err := decoder.Decode(&reqBody)
 		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
+			utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
 			return
 		}
 
@@ -75,20 +76,23 @@ func CreateSignUpHandler(userService *service.UserService) http.HandlerFunc {
 			Password: reqBody.Password,
 		})
 		if err != nil {
-			if err == service.ErrInvalidSignUpInput {
-				writeJSONError(w, http.StatusBadRequest, "email and password may not be blank")
+			if errors.Is(err, service.ErrInvalidSignUpInput) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "email and password may not be blank"})
 				return
 			}
 
-			if err == service.ErrInvalidEmail {
-				writeJSONError(w, http.StatusBadRequest, "email is not valid")
+			if errors.Is(err, service.ErrInvalidEmail) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "email is not valid"})
 				return
 			}
 
-			if err == service.ErrEmailTaken {
-				writeJSONError(w, http.StatusBadRequest, "email already in use")
+			if errors.Is(err, service.ErrEmailTaken) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "email already in use"})
 				return
 			}
+
+			utils.WriteJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
+			return
 		}
 
 		w.WriteHeader(http.StatusOK)
