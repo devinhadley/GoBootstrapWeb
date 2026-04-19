@@ -19,6 +19,47 @@ type signUpBody struct {
 	Password string `json:"password"`
 }
 
+func CreateSignUpHandler(userService *service.UserService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var reqBody signUpBody
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+
+		err := decoder.Decode(&reqBody)
+		if err != nil {
+			utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
+			return
+		}
+
+		_, err = userService.SignUp(r.Context(), service.SignUpInput{
+			Email:    reqBody.Email,
+			Password: reqBody.Password,
+		})
+		if err != nil {
+			if errors.Is(err, service.ErrInvalidSignUpInput) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "email and password may not be blank"})
+				return
+			}
+
+			if errors.Is(err, service.ErrInvalidEmail) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email is not valid"})
+				return
+			}
+
+			if errors.Is(err, service.ErrEmailTaken) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email already in use"})
+				return
+			}
+
+			utils.WriteAndReportInternalError(w)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		// TODO: Setup session cookie.
+	}
+}
+
 func CreateLoginHandler(userService *service.UserService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var reqBody loginBody
@@ -45,7 +86,7 @@ func CreateLoginHandler(userService *service.UserService) http.HandlerFunc {
 			}
 
 			if errors.Is(err, service.ErrInvalidEmail) {
-				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "email is not valid"})
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email is not valid"})
 				return
 			}
 
@@ -56,45 +97,6 @@ func CreateLoginHandler(userService *service.UserService) http.HandlerFunc {
 
 		// Set session...
 		w.WriteHeader(http.StatusOK)
-	}
-}
-
-func CreateSignUpHandler(userService *service.UserService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var reqBody signUpBody
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-
-		err := decoder.Decode(&reqBody)
-		if err != nil {
-			utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
-			return
-		}
-
-		_, err = userService.SignUp(r.Context(), service.SignUpInput{
-			Email:    reqBody.Email,
-			Password: reqBody.Password,
-		})
-		if err != nil {
-			if errors.Is(err, service.ErrInvalidSignUpInput) {
-				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "email and password may not be blank"})
-				return
-			}
-
-			if errors.Is(err, service.ErrInvalidEmail) {
-				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "email is not valid"})
-				return
-			}
-
-			if errors.Is(err, service.ErrEmailTaken) {
-				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "email already in use"})
-				return
-			}
-
-			utils.WriteJSONResponse(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
+		// TODO: Setup session cookie.
 	}
 }

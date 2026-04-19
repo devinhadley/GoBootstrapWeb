@@ -35,6 +35,7 @@ func TestSignUpIntegration(t *testing.T) {
 
 	t.Run("sign up succeeds and persists user", testSignUpSucceedsAndPersistsUser)
 	t.Run("duplicate email returns bad request and does not create second user", testSignUpDuplicateEmail)
+	t.Run("invalid email returns bad request and does not persist user", testSignUpRejectsInvalidEmail)
 	t.Run("blank email or password returns bad request and does not persist user", testSignUpRejectsBlankEmailOrPassword)
 }
 
@@ -104,8 +105,8 @@ func testSignUpDuplicateEmail(t *testing.T) {
 	}
 
 	gotErr := decodeErrorResponse(t, second)
-	if gotErr.Error != "email already in use" {
-		t.Fatalf("got error %q, want %q", gotErr.Error, "email already in use")
+	if gotErr.Email != "email already in use" {
+		t.Fatalf("got email error %q, want %q", gotErr.Email, "email already in use")
 	}
 
 	userCount := countUsersByEmail(t, deps.pool, input["email"])
@@ -153,6 +154,30 @@ func testSignUpRejectsBlankEmailOrPassword(t *testing.T) {
 
 			assertNoUserWithEmail(t, deps.queries, tc.assertEmail)
 		})
+	}
+}
+
+func testSignUpRejectsInvalidEmail(t *testing.T) {
+	deps := setupUserIntegrationDeps(t)
+
+	email := "invalid"
+	rec := performJSONRequest(deps.signUp, http.MethodPost, "/signup", map[string]string{
+		"email":    email,
+		"password": "example-password",
+	})
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	gotErr := decodeErrorResponse(t, rec)
+	if gotErr.Email != "email is not valid" {
+		t.Fatalf("got email error %q, want %q", gotErr.Email, "email is not valid")
+	}
+
+	userCount := countUsers(t, deps.pool)
+	if userCount != 0 {
+		t.Fatalf("got %d users in database, want 0", userCount)
 	}
 }
 
@@ -205,8 +230,8 @@ func testLogInRejectsInvalidEmail(t *testing.T) {
 	}
 
 	gotErr := decodeErrorResponse(t, rec)
-	if gotErr.Error != "email is not valid" {
-		t.Fatalf("got error %q, want %q", gotErr.Error, "email is not valid")
+	if gotErr.Email != "email is not valid" {
+		t.Fatalf("got email error %q, want %q", gotErr.Email, "email is not valid")
 	}
 }
 
@@ -312,6 +337,7 @@ func performJSONRequest(handler http.Handler, method string, path string, body a
 
 type apiErrorResponse struct {
 	Error string `json:"error"`
+	Email string `json:"email"`
 }
 
 func decodeErrorResponse(t *testing.T, rec *httptest.ResponseRecorder) apiErrorResponse {

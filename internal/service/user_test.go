@@ -18,13 +18,16 @@ func TestSignUp(t *testing.T) {
 	t.Run("sign up rejects invalid email", testUserSignUpRejectsInvalidEmail)
 	t.Run("sign up normalizes and trims email", testUserSignUpNormalizesAndTrimsEmail)
 	t.Run("sign up returns email taken when email already exists", testUserSignUpEmailTaken)
+	t.Run("sign up propagates unexpected query error", testUserSignUpPropagatesUnexpectedError)
 }
 
 func TestLogIn(t *testing.T) {
 	t.Run("user can log in", testUserLogIn)
 	t.Run("log in rejects blank email or password", testUserLogInRejectsBlankEmailOrPassword)
+	t.Run("log in rejects invalid email", testUserLogInRejectsInvalidEmail)
 	t.Run("log in returns invalid credentials when user does not exist", testUserLogInUserNotFound)
 	t.Run("log in returns invalid credentials for wrong password", testUserLogInWrongPassword)
+	t.Run("log in propagates unexpected query error", testUserLogInPropagatesUnexpectedError)
 }
 
 func testUserSignUp(t *testing.T) {
@@ -171,6 +174,26 @@ func testUserSignUpEmailTaken(t *testing.T) {
 	}
 }
 
+func testUserSignUpPropagatesUnexpectedError(t *testing.T) {
+	ctx := context.Background()
+	expectedErr := errors.New("database unavailable")
+
+	userService := setupUserService(t, MockUserQueries{
+		CreateUserFn: func(ctx context.Context, arg db.CreateUserParams) (db.User, error) {
+			return db.User{}, expectedErr
+		},
+	})
+
+	_, err := userService.SignUp(ctx, SignUpInput{
+		Email:    "test@example.com",
+		Password: "example-password",
+	})
+
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf("got error %v, want %v", err, expectedErr)
+	}
+}
+
 func testUserLogIn(t *testing.T) {
 	ctx := context.Background()
 
@@ -261,6 +284,22 @@ func testUserLogInWrongPassword(t *testing.T) {
 	}
 }
 
+func testUserLogInRejectsInvalidEmail(t *testing.T) {
+	ctx := context.Background()
+	userService := setupUserService(t, MockUserQueries{
+		GetUserByEmailFn: func(ctx context.Context, email string) (db.User, error) {
+			t.Fatal("GetUserByEmail should not be called for invalid email")
+			return db.User{}, nil
+		},
+	})
+
+	_, err := userService.LogIn(ctx, "invalid", "example-password")
+
+	if !errors.Is(err, ErrInvalidEmail) {
+		t.Fatalf("got error %v, want %v", err, ErrInvalidEmail)
+	}
+}
+
 func testUserLogInUserNotFound(t *testing.T) {
 	ctx := context.Background()
 	userService := setupUserService(t, MockUserQueries{
@@ -273,6 +312,23 @@ func testUserLogInUserNotFound(t *testing.T) {
 
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("got error %v, want %v", err, ErrInvalidCredentials)
+	}
+}
+
+func testUserLogInPropagatesUnexpectedError(t *testing.T) {
+	ctx := context.Background()
+	expectedErr := errors.New("database unavailable")
+
+	userService := setupUserService(t, MockUserQueries{
+		GetUserByEmailFn: func(ctx context.Context, email string) (db.User, error) {
+			return db.User{}, expectedErr
+		},
+	})
+
+	_, err := userService.LogIn(ctx, "test@example.com", "example-password")
+
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf("got error %v, want %v", err, expectedErr)
 	}
 }
 
