@@ -9,12 +9,11 @@ import (
 )
 
 type Session struct {
-	ID                []byte
-	UserID            int64
-	CreatedAt         pgtype.Timestamptz
-	IdleExpiresAt     pgtype.Timestamptz
-	AbsoluteExpiresAt pgtype.Timestamptz
-	RenewalExpiresAt  pgtype.Timestamptz
+	ID              []byte
+	UserID          int64
+	CreatedAt       pgtype.Timestamptz
+	LastSeenAt      pgtype.Timestamptz
+	LastRefreshedAt pgtype.Timestamptz
 }
 
 type User struct {

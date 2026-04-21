@@ -1,21 +1,15 @@
 -- name: CreateSession :one
 INSERT INTO sessions (
     id,
-    user_id,
-    idle_expires_at,
-    absolute_expires_at,
-    renewal_expires_at
+    user_id
 ) VALUES (
     $1,
-    $2,
-    $3,
-    $4,
-    $5
+    $2
 )
-RETURNING id, user_id, created_at, idle_expires_at, absolute_expires_at, renewal_expires_at;
+RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at;
 
 -- name: GetSessionByID :one
-SELECT id, user_id, created_at, idle_expires_at, absolute_expires_at, renewal_expires_at
+SELECT id, user_id, created_at, last_seen_at, last_seen_at
 FROM sessions
 WHERE id = $1;
 

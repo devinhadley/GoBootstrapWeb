@@ -14,44 +14,28 @@ import (
 const createSession = `-- name: CreateSession :one
 INSERT INTO sessions (
     id,
-    user_id,
-    idle_expires_at,
-    absolute_expires_at,
-    renewal_expires_at
+    user_id
 ) VALUES (
     $1,
-    $2,
-    $3,
-    $4,
-    $5
+    $2
 )
-RETURNING id, user_id, created_at, idle_expires_at, absolute_expires_at, renewal_expires_at
+RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at
 `
 
 type CreateSessionParams struct {
-	ID                []byte
-	UserID            int64
-	IdleExpiresAt     pgtype.Timestamptz
-	AbsoluteExpiresAt pgtype.Timestamptz
-	RenewalExpiresAt  pgtype.Timestamptz
+	ID     []byte
+	UserID int64
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
-	row := q.db.QueryRow(ctx, createSession,
-		arg.ID,
-		arg.UserID,
-		arg.IdleExpiresAt,
-		arg.AbsoluteExpiresAt,
-		arg.RenewalExpiresAt,
-	)
+	row := q.db.QueryRow(ctx, createSession, arg.ID, arg.UserID)
 	var i Session
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
 		&i.CreatedAt,
-		&i.IdleExpiresAt,
-		&i.AbsoluteExpiresAt,
-		&i.RenewalExpiresAt,
+		&i.LastSeenAt,
+		&i.LastRefreshedAt,
 	)
 	return i, err
 }
@@ -67,21 +51,28 @@ func (q *Queries) DeleteSessionByID(ctx context.Context, id []byte) error {
 }
 
 const getSessionByID = `-- name: GetSessionByID :one
-SELECT id, user_id, created_at, idle_expires_at, absolute_expires_at, renewal_expires_at
+SELECT id, user_id, created_at, last_seen_at, last_seen_at
 FROM sessions
 WHERE id = $1
 `
 
-func (q *Queries) GetSessionByID(ctx context.Context, id []byte) (Session, error) {
+type GetSessionByIDRow struct {
+	ID           []byte
+	UserID       int64
+	CreatedAt    pgtype.Timestamptz
+	LastSeenAt   pgtype.Timestamptz
+	LastSeenAt_2 pgtype.Timestamptz
+}
+
+func (q *Queries) GetSessionByID(ctx context.Context, id []byte) (GetSessionByIDRow, error) {
 	row := q.db.QueryRow(ctx, getSessionByID, id)
-	var i Session
+	var i GetSessionByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
 		&i.CreatedAt,
-		&i.IdleExpiresAt,
-		&i.AbsoluteExpiresAt,
-		&i.RenewalExpiresAt,
+		&i.LastSeenAt,
+		&i.LastSeenAt_2,
 	)
 	return i, err
 }
