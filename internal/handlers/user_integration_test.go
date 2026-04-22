@@ -304,13 +304,14 @@ func setupUserIntegrationDeps(t *testing.T) userIntegrationDeps {
 
 	queries := db.New(pool)
 	userService := service.NewUserService(queries)
+	sessionService := service.NewSessionService(queries)
 
 	return userIntegrationDeps{
 		pool:        pool,
 		queries:     queries,
 		userService: userService,
-		signUp:      CreateSignUpHandler(userService),
-		login:       CreateLoginHandler(userService),
+		signUp:      CreateSignUpHandler(userService, sessionService),
+		login:       CreateLoginHandler(userService, sessionService),
 	}
 }
 

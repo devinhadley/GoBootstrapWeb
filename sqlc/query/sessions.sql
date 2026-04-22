@@ -16,3 +16,20 @@ WHERE id = $1;
 -- name: DeleteSessionByID :exec
 DELETE FROM sessions
 WHERE id = $1;
+
+-- name: GetSessionCountByUser :one
+SELECT COUNT(*)
+FROM sessions
+WHERE user_id = $1;
+
+-- name: DeleteLeastRecentlyUsedSessionByUser :exec
+DELETE
+FROM sessions
+WHERE id = (
+  SELECT s.id
+  FROM sessions s
+  WHERE s.user_id = $1
+  ORDER BY s.last_seen_at ASC
+  LIMIT 1
+);
+

@@ -1,15 +1,23 @@
-package handlers // handlers are http endpoints.
+package handlers // handlers are responsible for http endpoints and http related actions.
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
+	"devinhadley/gobootstrapweb/internal/db"
 	"devinhadley/gobootstrapweb/internal/service"
 	"devinhadley/gobootstrapweb/internal/utils"
 )
 
-func CreateSignUpHandler(userService *service.UserService) http.HandlerFunc {
+var (
+	sessionIDCookieName         = "id"
+	absoluteSessionExpiryMonths = 3
+)
+
+func CreateSignUpHandler(userService *service.UserService, sessionService *service.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var reqBody service.AuthenticateBody
 		decoder := json.NewDecoder(r.Body)
@@ -21,7 +29,7 @@ func CreateSignUpHandler(userService *service.UserService) http.HandlerFunc {
 			return
 		}
 
-		_, err = userService.SignUp(r.Context(), service.AuthenticateBody{
+		user, err := userService.SignUp(r.Context(), service.AuthenticateBody{
 			Email:    reqBody.Email,
 			Password: reqBody.Password,
 		})
@@ -45,12 +53,19 @@ func CreateSignUpHandler(userService *service.UserService) http.HandlerFunc {
 			return
 		}
 
+		session, err := sessionService.CreateSession(r.Context(), user)
+		if err != nil {
+			utils.WriteAndReportInternalError(w)
+			return
+		}
+
+		addSessionToCookie(w, session)
+
 		w.WriteHeader(http.StatusOK)
-		// TODO: Setup session cookie.
 	}
 }
 
-func CreateLoginHandler(userService *service.UserService) http.HandlerFunc {
+func CreateLoginHandler(userService *service.UserService, sessionService *service.SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var reqBody service.AuthenticateBody
 		decoder := json.NewDecoder(r.Body)
@@ -92,4 +107,26 @@ func CreateLoginHandler(userService *service.UserService) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 		// TODO: Setup session cookie.
 	}
+}
+
+func addSessionToCookie(w http.ResponseWriter, session db.Session) {
+	// TODO: Setup session cookie.
+	// Cookie Requires:
+	// 	- Secure
+	// 	- HttpOnly
+	// 	- SameSite
+	// 	- Expire/Max Age
+
+	base64SessionID := base64.StdEncoding.EncodeToString(session.ID)
+
+	expiration := time.Now().Add(365 * 24 * time.Hour)
+
+	cookie := http.Cookie{
+		Name:     "id",
+		Value:    base64SessionID,
+		Expires:  expiration,
+		HttpOnly: true,
+		Path:     "/",
+	}
+	http.SetCookie(w, &cookie)
 }

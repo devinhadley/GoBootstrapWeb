@@ -40,6 +40,23 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 	return i, err
 }
 
+const deleteLeastRecentlyUsedSessionByUser = `-- name: DeleteLeastRecentlyUsedSessionByUser :exec
+DELETE
+FROM sessions
+WHERE id = (
+  SELECT s.id
+  FROM sessions s
+  WHERE s.user_id = $1
+  ORDER BY s.last_seen_at ASC
+  LIMIT 1
+)
+`
+
+func (q *Queries) DeleteLeastRecentlyUsedSessionByUser(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteLeastRecentlyUsedSessionByUser, userID)
+	return err
+}
+
 const deleteSessionByID = `-- name: DeleteSessionByID :exec
 DELETE FROM sessions
 WHERE id = $1
@@ -75,4 +92,17 @@ func (q *Queries) GetSessionByID(ctx context.Context, id []byte) (GetSessionByID
 		&i.LastSeenAt_2,
 	)
 	return i, err
+}
+
+const getSessionCountByUser = `-- name: GetSessionCountByUser :one
+SELECT COUNT(*)
+FROM sessions
+WHERE user_id = $1
+`
+
+func (q *Queries) GetSessionCountByUser(ctx context.Context, userID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, getSessionCountByUser, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }

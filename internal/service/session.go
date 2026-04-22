@@ -19,15 +19,17 @@ import (
 
 type SessionQueries interface {
 	CreateSession(ctx context.Context, arg db.CreateSessionParams) (db.Session, error)
+	DeleteLeastRecentlyUsedSessionByUser(ctx context.Context, userID int64) error
 	DeleteSessionByID(ctx context.Context, id []byte) error
-	GetSessionByID(ctx context.Context, id []byte) (db.Session, error)
+	GetSessionByID(ctx context.Context, id []byte) (db.GetSessionByIDRow, error)
+	GetSessionCountByUser(ctx context.Context, userID int64) (int64, error)
 }
 
 type SessionService struct {
 	queries SessionQueries
 }
 
-func CreateSessionService(queries SessionQueries) *SessionService {
+func NewSessionService(queries SessionQueries) *SessionService {
 	return &SessionService{
 		queries: queries,
 	}
@@ -35,9 +37,25 @@ func CreateSessionService(queries SessionQueries) *SessionService {
 
 var ErrUserNotFound = errors.New("user not found")
 
+const MaxNumberOfActiveSessions = 10
+
 func (s *SessionService) CreateSession(ctx context.Context, user db.User) (db.Session, error) {
+	numSessions, err := s.queries.GetSessionCountByUser(ctx, user.ID)
+	if err != nil {
+		return db.Session{}, nil
+	}
+
+	// TODO: Test this behavior especially in integration.
+	// Limit number of active user sessions.
+	if numSessions >= MaxNumberOfActiveSessions {
+		err = s.queries.DeleteLeastRecentlyUsedSessionByUser(ctx, user.ID)
+		if err != nil {
+			return db.Session{}, err
+		}
+	}
+
 	sixteenRandomBytes := make([]byte, 16)
-	_, err := rand.Read(sixteenRandomBytes)
+	_, err = rand.Read(sixteenRandomBytes)
 	if err != nil {
 		return db.Session{}, err
 	}
