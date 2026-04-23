@@ -59,7 +59,7 @@ func CreateSignUpHandler(userService *service.UserService, sessionService *servi
 			return
 		}
 
-		addSessionToCookie(w, session)
+		addSessionToCookie(w, &session)
 
 		w.WriteHeader(http.StatusOK)
 	}
@@ -109,7 +109,7 @@ func CreateLoginHandler(userService *service.UserService, sessionService *servic
 	}
 }
 
-func addSessionToCookie(w http.ResponseWriter, session db.Session) {
+func addSessionToCookie(w http.ResponseWriter, session *db.Session) {
 	// TODO: Setup session cookie.
 	// Cookie Requires:
 	// 	- Secure
@@ -119,14 +119,21 @@ func addSessionToCookie(w http.ResponseWriter, session db.Session) {
 
 	base64SessionID := base64.StdEncoding.EncodeToString(session.ID)
 
-	expiration := time.Now().Add(365 * 24 * time.Hour)
+	absoluteExpiration := time.Now().AddDate(0, 3, 0)
+
+	ok, isSecure := utils.GetEnv("USE_HTTPS")
+	if !ok {
+		isSecure = "true"
+	}
 
 	cookie := http.Cookie{
 		Name:     "id",
 		Value:    base64SessionID,
-		Expires:  expiration,
+		Expires:  absoluteExpiration,
 		HttpOnly: true,
 		Path:     "/",
+		Secure:   isSecure == "true",
 	}
+
 	http.SetCookie(w, &cookie)
 }
