@@ -30,6 +30,11 @@ func TestLogIn(t *testing.T) {
 	t.Run("log in propagates unexpected query error", testUserLogInPropagatesUnexpectedError)
 }
 
+func TestGetUserByID(t *testing.T) {
+	t.Run("returns user by id", testGetUserByID)
+	t.Run("propagates query error", testGetUserByIDPropagatesError)
+}
+
 func testUserSignUp(t *testing.T) {
 	userService := setupUserService(t, MockUserQueries{})
 	ctx := context.Background()
@@ -350,6 +355,51 @@ func testUserLogInPropagatesUnexpectedError(t *testing.T) {
 	}
 }
 
+func testGetUserByID(t *testing.T) {
+	ctx := context.Background()
+	wantID := int64(42)
+	wantEmail := "test@example.com"
+
+	userService := setupUserService(t, MockUserQueries{
+		GetUserByIDFn: func(ctx context.Context, id int64) (db.User, error) {
+			if id != wantID {
+				t.Fatalf("GetUserByID got id %v, want %v", id, wantID)
+			}
+
+			return db.User{ID: id, Email: wantEmail}, nil
+		},
+	})
+
+	user, err := userService.GetUserByID(ctx, wantID)
+	if err != nil {
+		t.Fatalf("GetUserByID returned error: %v", err)
+	}
+
+	if user.ID != wantID {
+		t.Fatalf("got id %v, want %v", user.ID, wantID)
+	}
+
+	if user.Email != wantEmail {
+		t.Fatalf("got email %v, want %v", user.Email, wantEmail)
+	}
+}
+
+func testGetUserByIDPropagatesError(t *testing.T) {
+	ctx := context.Background()
+	wantErr := errors.New("database unavailable")
+
+	userService := setupUserService(t, MockUserQueries{
+		GetUserByIDFn: func(ctx context.Context, id int64) (db.User, error) {
+			return db.User{}, wantErr
+		},
+	})
+
+	_, err := userService.GetUserByID(ctx, 42)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("got error %v, want %v", err, wantErr)
+	}
+}
+
 func setupUserService(t *testing.T, mockedQueries MockUserQueries) *UserService {
 	t.Helper()
 	return NewUserService(&mockedQueries)
@@ -359,6 +409,7 @@ func setupUserService(t *testing.T, mockedQueries MockUserQueries) *UserService 
 type MockUserQueries struct {
 	CreateUserFn     func(ctx context.Context, arg db.CreateUserParams) (db.User, error)
 	GetUserByEmailFn func(ctx context.Context, email string) (db.User, error)
+	GetUserByIDFn    func(ctx context.Context, id int64) (db.User, error)
 }
 
 func (q *MockUserQueries) CreateUser(ctx context.Context, arg db.CreateUserParams) (db.User, error) {
@@ -381,5 +432,16 @@ func (q *MockUserQueries) GetUserByEmail(ctx context.Context, email string) (db.
 	return db.User{
 		ID:    1,
 		Email: email,
+	}, nil
+}
+
+func (q *MockUserQueries) GetUserByID(ctx context.Context, id int64) (db.User, error) {
+	if q.GetUserByIDFn != nil {
+		return q.GetUserByIDFn(ctx, id)
+	}
+
+	return db.User{
+		ID:    id,
+		Email: "test@example.com",
 	}, nil
 }

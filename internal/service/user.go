@@ -1,5 +1,5 @@
-// Package service contains all business logic and validation for handlers.
-// Services are segmented by DB table.
+// Package service contains all application logic and validation for handlers.
+// Services are segmented by corresponding DB table.
 package service
 
 import (
@@ -27,6 +27,7 @@ var (
 type UserQueries interface {
 	CreateUser(ctx context.Context, arg db.CreateUserParams) (db.User, error)
 	GetUserByEmail(ctx context.Context, email string) (db.User, error)
+	GetUserByID(ctx context.Context, id int64) (db.User, error)
 }
 
 type UserService struct {
@@ -125,4 +126,8 @@ func (s *UserService) LogIn(ctx context.Context, input AuthenticateBody) (db.Use
 	}
 
 	return user, nil
+}
+
+func (s *UserService) GetUserByID(ctx context.Context, id int64) (db.User, error) {
+	return s.queries.GetUserByID(ctx, id)
 }

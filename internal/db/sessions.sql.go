@@ -7,8 +7,6 @@ package db
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createSession = `-- name: CreateSession :one
@@ -68,28 +66,20 @@ func (q *Queries) DeleteSessionByID(ctx context.Context, id []byte) error {
 }
 
 const getSessionByID = `-- name: GetSessionByID :one
-SELECT id, user_id, created_at, last_seen_at, last_seen_at
+SELECT id, user_id, created_at, last_seen_at, last_refreshed_at
 FROM sessions
 WHERE id = $1
 `
 
-type GetSessionByIDRow struct {
-	ID           []byte
-	UserID       int64
-	CreatedAt    pgtype.Timestamptz
-	LastSeenAt   pgtype.Timestamptz
-	LastSeenAt_2 pgtype.Timestamptz
-}
-
-func (q *Queries) GetSessionByID(ctx context.Context, id []byte) (GetSessionByIDRow, error) {
+func (q *Queries) GetSessionByID(ctx context.Context, id []byte) (Session, error) {
 	row := q.db.QueryRow(ctx, getSessionByID, id)
-	var i GetSessionByIDRow
+	var i Session
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
 		&i.CreatedAt,
 		&i.LastSeenAt,
-		&i.LastSeenAt_2,
+		&i.LastRefreshedAt,
 	)
 	return i, err
 }
@@ -105,4 +95,29 @@ func (q *Queries) GetSessionCountByUser(ctx context.Context, userID int64) (int6
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const updateSessionIDByID = `-- name: UpdateSessionIDByID :one
+UPDATE sessions
+SET id = $2
+WHERE id = $1
+RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at
+`
+
+type UpdateSessionIDByIDParams struct {
+	ID   []byte
+	ID_2 []byte
+}
+
+func (q *Queries) UpdateSessionIDByID(ctx context.Context, arg UpdateSessionIDByIDParams) (Session, error) {
+	row := q.db.QueryRow(ctx, updateSessionIDByID, arg.ID, arg.ID_2)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.LastSeenAt,
+		&i.LastRefreshedAt,
+	)
+	return i, err
 }

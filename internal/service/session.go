@@ -4,25 +4,20 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"time"
 
 	"devinhadley/gobootstrapweb/internal/db"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// NOTE:
-// Must Haves:
-// 128 bit entropy id
-// absolute expiration
-// idle expiration
-// id refresh
-
 type SessionQueries interface {
 	CreateSession(ctx context.Context, arg db.CreateSessionParams) (db.Session, error)
 	DeleteLeastRecentlyUsedSessionByUser(ctx context.Context, userID int64) error
 	DeleteSessionByID(ctx context.Context, id []byte) error
-	GetSessionByID(ctx context.Context, id []byte) (db.GetSessionByIDRow, error)
+	GetSessionByID(ctx context.Context, id []byte) (db.Session, error)
 	GetSessionCountByUser(ctx context.Context, userID int64) (int64, error)
+	UpdateSessionIDByID(ctx context.Context, arg db.UpdateSessionIDByIDParams) (db.Session, error)
 }
 
 type SessionService struct {
@@ -39,6 +34,12 @@ var ErrUserNotFound = errors.New("user not found")
 
 const MaxNumberOfActiveSessions = 10
 
+const (
+	sessionAbsoluteExpirationDays = 90
+	sessionIdleExpirationDays     = 14
+	sessionRotationDays           = 7
+)
+
 func (s *SessionService) CreateSession(ctx context.Context, user db.User) (db.Session, error) {
 	numSessions, err := s.queries.GetSessionCountByUser(ctx, user.ID)
 	if err != nil {
@@ -54,14 +55,13 @@ func (s *SessionService) CreateSession(ctx context.Context, user db.User) (db.Se
 		}
 	}
 
-	sixteenRandomBytes := make([]byte, 16)
-	_, err = rand.Read(sixteenRandomBytes)
+	sessionID, err := generateSessionID()
 	if err != nil {
 		return db.Session{}, err
 	}
 
 	session, err := s.queries.CreateSession(ctx, db.CreateSessionParams{
-		ID:     sixteenRandomBytes,
+		ID:     sessionID,
 		UserID: user.ID,
 	})
 	if err != nil {
@@ -74,4 +74,55 @@ func (s *SessionService) CreateSession(ctx context.Context, user db.User) (db.Se
 	}
 
 	return session, nil
+}
+
+func (s *SessionService) GetSession(ctx context.Context, sessionID []byte) (db.Session, error) {
+	return s.queries.GetSessionByID(ctx, sessionID)
+}
+
+func (s *SessionService) ExpireSession(ctx context.Context, sessionID []byte) error {
+	return s.queries.DeleteSessionByID(ctx, sessionID)
+}
+
+func (s *SessionService) IsSessionExpired(session db.Session) bool {
+	now := time.Now()
+	absoluteExpirationDate := session.CreatedAt.Time.AddDate(0, 0, sessionAbsoluteExpirationDays)
+	if absoluteExpirationDate.Before(now) {
+		return true
+	}
+
+	idleExpirationDate := session.LastSeenAt.Time.AddDate(0, 0, sessionIdleExpirationDays)
+	return idleExpirationDate.Before(now)
+}
+
+func (s *SessionService) ShouldRotateSession(session db.Session) bool {
+	rotationRequiredDate := session.LastRefreshedAt.Time.AddDate(0, 0, sessionRotationDays)
+	return rotationRequiredDate.Before(time.Now())
+}
+
+func (s *SessionService) RotateSession(ctx context.Context, sessionID []byte) (db.Session, error) {
+	rotatedSessionID, err := generateSessionID()
+	if err != nil {
+		return db.Session{}, err
+	}
+
+	updatedSession, err := s.queries.UpdateSessionIDByID(ctx, db.UpdateSessionIDByIDParams{
+		ID:   sessionID,
+		ID_2: rotatedSessionID,
+	})
+	if err != nil {
+		return db.Session{}, err
+	}
+
+	return updatedSession, nil
+}
+
+func generateSessionID() ([]byte, error) {
+	sessionID := make([]byte, 16)
+	_, err := rand.Read(sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	return sessionID, nil
 }

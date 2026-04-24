@@ -1,20 +1,12 @@
 package handlers // handlers are responsible for http endpoints and http related actions.
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"time"
 
-	"devinhadley/gobootstrapweb/internal/db"
 	"devinhadley/gobootstrapweb/internal/service"
 	"devinhadley/gobootstrapweb/internal/utils"
-)
-
-var (
-	sessionIDCookieName         = "id"
-	absoluteSessionExpiryMonths = 3
 )
 
 func CreateSignUpHandler(userService *service.UserService, sessionService *service.SessionService) http.HandlerFunc {
@@ -59,7 +51,7 @@ func CreateSignUpHandler(userService *service.UserService, sessionService *servi
 			return
 		}
 
-		addSessionToCookie(w, &session)
+		utils.AddSessionToCookie(w, &session)
 
 		w.WriteHeader(http.StatusOK)
 	}
@@ -107,33 +99,4 @@ func CreateLoginHandler(userService *service.UserService, sessionService *servic
 		w.WriteHeader(http.StatusOK)
 		// TODO: Setup session cookie.
 	}
-}
-
-func addSessionToCookie(w http.ResponseWriter, session *db.Session) {
-	// TODO: Setup session cookie.
-	// Cookie Requires:
-	// 	- Secure
-	// 	- HttpOnly
-	// 	- SameSite
-	// 	- Expire/Max Age
-
-	base64SessionID := base64.StdEncoding.EncodeToString(session.ID)
-
-	absoluteExpiration := time.Now().AddDate(0, 3, 0)
-
-	ok, isSecure := utils.GetEnv("USE_HTTPS")
-	if !ok {
-		isSecure = "true"
-	}
-
-	cookie := http.Cookie{
-		Name:     "id",
-		Value:    base64SessionID,
-		Expires:  absoluteExpiration,
-		HttpOnly: true,
-		Path:     "/",
-		Secure:   isSecure == "true",
-	}
-
-	http.SetCookie(w, &cookie)
 }

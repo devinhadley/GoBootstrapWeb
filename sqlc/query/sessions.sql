@@ -9,7 +9,7 @@ INSERT INTO sessions (
 RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at;
 
 -- name: GetSessionByID :one
-SELECT id, user_id, created_at, last_seen_at, last_seen_at
+SELECT *
 FROM sessions
 WHERE id = $1;
 
@@ -21,6 +21,12 @@ WHERE id = $1;
 SELECT COUNT(*)
 FROM sessions
 WHERE user_id = $1;
+
+-- name: UpdateSessionIDByID :one
+UPDATE sessions
+SET id = $2
+WHERE id = $1
+RETURNING *;
 
 -- name: DeleteLeastRecentlyUsedSessionByUser :exec
 DELETE

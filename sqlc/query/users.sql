@@ -12,3 +12,8 @@ RETURNING id, email, password_hash, signed_up_at, is_active;
 SELECT id, email, password_hash, signed_up_at, is_active
 FROM users
 WHERE email = $1;
+
+-- name: GetUserByID :one
+SELECT id, email, password_hash, signed_up_at, is_active
+FROM users
+WHERE id = $1;
