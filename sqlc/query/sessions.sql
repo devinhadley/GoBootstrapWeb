@@ -28,6 +28,12 @@ SET id = $2
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateSessionLastSeenToNow :one
+UPDATE sessions
+SET last_seen_at = NOW()
+WHERE id = $1
+RETURNING *;
+
 -- name: DeleteLeastRecentlyUsedSessionByUser :exec
 DELETE
 FROM sessions

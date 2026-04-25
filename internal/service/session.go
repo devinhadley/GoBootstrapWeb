@@ -18,6 +18,7 @@ type SessionQueries interface {
 	GetSessionByID(ctx context.Context, id []byte) (db.Session, error)
 	GetSessionCountByUser(ctx context.Context, userID int64) (int64, error)
 	UpdateSessionIDByID(ctx context.Context, arg db.UpdateSessionIDByIDParams) (db.Session, error)
+	UpdateSessionLastSeenToNow(ctx context.Context, id []byte) (db.Session, error)
 }
 
 type SessionService struct {
@@ -35,15 +36,16 @@ var ErrUserNotFound = errors.New("user not found")
 const MaxNumberOfActiveSessions = 10
 
 const (
-	sessionAbsoluteExpirationDays = 90
-	sessionIdleExpirationDays     = 14
-	sessionRotationDays           = 7
+	sessionAbsoluteExpirationDays      = 90
+	sessionIdleExpirationDays          = 14
+	sessionRotationDays                = 7
+	updateLastSeenAfterDurationMinutes = 20
 )
 
 func (s *SessionService) CreateSession(ctx context.Context, user db.User) (db.Session, error) {
 	numSessions, err := s.queries.GetSessionCountByUser(ctx, user.ID)
 	if err != nil {
-		return db.Session{}, nil
+		return db.Session{}, err
 	}
 
 	// TODO: Test this behavior especially in integration.
@@ -93,6 +95,17 @@ func (s *SessionService) IsSessionExpired(session db.Session) bool {
 
 	idleExpirationDate := session.LastSeenAt.Time.AddDate(0, 0, sessionIdleExpirationDays)
 	return idleExpirationDate.Before(now)
+}
+
+func (s *SessionService) UpdateLastSeen(ctx context.Context, session db.Session) error {
+	// Prevents us from updating the session on every request...
+	if time.Since(session.LastSeenAt.Time).Minutes() > updateLastSeenAfterDurationMinutes {
+		_, err := s.queries.UpdateSessionLastSeenToNow(ctx, session.ID)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SessionService) ShouldRotateSession(session db.Session) bool {

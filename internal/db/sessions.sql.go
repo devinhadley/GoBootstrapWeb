@@ -121,3 +121,23 @@ func (q *Queries) UpdateSessionIDByID(ctx context.Context, arg UpdateSessionIDBy
 	)
 	return i, err
 }
+
+const updateSessionLastSeenToNow = `-- name: UpdateSessionLastSeenToNow :one
+UPDATE sessions
+SET last_seen_at = NOW()
+WHERE id = $1
+RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at
+`
+
+func (q *Queries) UpdateSessionLastSeenToNow(ctx context.Context, id []byte) (Session, error) {
+	row := q.db.QueryRow(ctx, updateSessionLastSeenToNow, id)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.LastSeenAt,
+		&i.LastRefreshedAt,
+	)
+	return i, err
+}
