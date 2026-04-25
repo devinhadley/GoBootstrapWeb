@@ -1,25 +1,23 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"devinhadley/gobootstrapweb/internal/db"
 	"devinhadley/gobootstrapweb/internal/service"
+	"devinhadley/gobootstrapweb/internal/utils/testutil"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/matthewhartstonge/argon2"
 )
 
-const integrationTestDSNEnvVar = "INTEGRATION_TEST_DB_DSN"
-
+// TODO: Add weak password validation!
 type userIntegrationDeps struct {
 	pool        *pgxpool.Pool
 	queries     *db.Queries
@@ -58,7 +56,7 @@ func testSignUpSucceedsAndPersistsUser(t *testing.T) {
 		"password": "example-password",
 	}
 
-	rec := performJSONRequest(deps.signUp, http.MethodPost, "/signup", input)
+	rec := testutil.PerformJSONRequest(deps.signUp, http.MethodPost, "/signup", input)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("got status %d, want %d", rec.Code, http.StatusOK)
 	}
@@ -94,12 +92,12 @@ func testSignUpDuplicateEmail(t *testing.T) {
 		"password": "example-password",
 	}
 
-	first := performJSONRequest(deps.signUp, http.MethodPost, "/signup", input)
+	first := testutil.PerformJSONRequest(deps.signUp, http.MethodPost, "/signup", input)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first sign up got status %d, want %d", first.Code, http.StatusOK)
 	}
 
-	second := performJSONRequest(deps.signUp, http.MethodPost, "/signup", input)
+	second := testutil.PerformJSONRequest(deps.signUp, http.MethodPost, "/signup", input)
 	if second.Code != http.StatusBadRequest {
 		t.Fatalf("second sign up got status %d, want %d", second.Code, http.StatusBadRequest)
 	}
@@ -130,7 +128,7 @@ func testSignUpRejectsBlankEmailOrPassword(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps := setupUserIntegrationDeps(t)
 
-			rec := performJSONRequest(deps.signUp, http.MethodPost, "/signup", map[string]string{
+			rec := testutil.PerformJSONRequest(deps.signUp, http.MethodPost, "/signup", map[string]string{
 				"email":    tc.email,
 				"password": tc.password,
 			})
@@ -161,7 +159,7 @@ func testSignUpRejectsInvalidEmail(t *testing.T) {
 	deps := setupUserIntegrationDeps(t)
 
 	email := "invalid"
-	rec := performJSONRequest(deps.signUp, http.MethodPost, "/signup", map[string]string{
+	rec := testutil.PerformJSONRequest(deps.signUp, http.MethodPost, "/signup", map[string]string{
 		"email":    email,
 		"password": "example-password",
 	})
@@ -205,7 +203,7 @@ func testLogInSucceeds(t *testing.T) {
 		t.Fatal("expected stored password hash to be present")
 	}
 
-	rec := performJSONRequest(deps.login, http.MethodPost, "/login", map[string]string{
+	rec := testutil.PerformJSONRequest(deps.login, http.MethodPost, "/login", map[string]string{
 		"email":    "test@example.com",
 		"password": "example-password",
 	})
@@ -220,7 +218,7 @@ func testLogInSucceeds(t *testing.T) {
 func testLogInRejectsInvalidEmail(t *testing.T) {
 	deps := setupUserIntegrationDeps(t)
 
-	rec := performJSONRequest(deps.login, http.MethodPost, "/login", map[string]string{
+	rec := testutil.PerformJSONRequest(deps.login, http.MethodPost, "/login", map[string]string{
 		"email":    "invalid",
 		"password": "example-password",
 	})
@@ -238,7 +236,7 @@ func testLogInRejectsInvalidEmail(t *testing.T) {
 func testLogInReturnsBadRequestWhenUserDoesNotExist(t *testing.T) {
 	deps := setupUserIntegrationDeps(t)
 
-	rec := performJSONRequest(deps.login, http.MethodPost, "/login", map[string]string{
+	rec := testutil.PerformJSONRequest(deps.login, http.MethodPost, "/login", map[string]string{
 		"email":    "missing@example.com",
 		"password": "example-password",
 	})
@@ -264,7 +262,7 @@ func testLogInReturnsBadRequestWhenPasswordIsIncorrect(t *testing.T) {
 		t.Fatalf("failed to seed user: %v", err)
 	}
 
-	rec := performJSONRequest(deps.login, http.MethodPost, "/login", map[string]string{
+	rec := testutil.PerformJSONRequest(deps.login, http.MethodPost, "/login", map[string]string{
 		"email":    "wrong-password@example.com",
 		"password": "incorrect-password",
 	})
@@ -282,10 +280,7 @@ func testLogInReturnsBadRequestWhenPasswordIsIncorrect(t *testing.T) {
 func setupUserIntegrationDeps(t *testing.T) userIntegrationDeps {
 	t.Helper()
 
-	dsn := os.Getenv(integrationTestDSNEnvVar)
-	if dsn == "" {
-		t.Errorf("%s is required for integration tests", integrationTestDSNEnvVar)
-	}
+	dsn := testutil.GetIntegrationTestDSN(t)
 
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -298,7 +293,7 @@ func setupUserIntegrationDeps(t *testing.T) userIntegrationDeps {
 	}
 
 	t.Cleanup(func() {
-		cleanupIntegrationTables(t, pool)
+		testutil.CleanupIntegrationTables(t, pool)
 		pool.Close()
 	})
 
@@ -313,27 +308,6 @@ func setupUserIntegrationDeps(t *testing.T) userIntegrationDeps {
 		signUp:      CreateSignUpHandler(userService, sessionService),
 		login:       CreateLoginHandler(userService, sessionService),
 	}
-}
-
-func cleanupIntegrationTables(t *testing.T, pool *pgxpool.Pool) {
-	t.Helper()
-
-	// Clears tables between tests.
-	_, err := pool.Exec(context.Background(), "TRUNCATE TABLE sessions, users RESTART IDENTITY")
-	if err != nil {
-		t.Fatalf("failed to clean integration tables: %v", err)
-	}
-}
-
-func performJSONRequest(handler http.Handler, method string, path string, body any) *httptest.ResponseRecorder {
-	payload, _ := json.Marshal(body)
-	req := httptest.NewRequest(method, path, bytes.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	handler.ServeHTTP(rec, req)
-
-	return rec
 }
 
 type apiErrorResponse struct {

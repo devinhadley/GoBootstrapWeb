@@ -9,6 +9,7 @@ import (
 
 	"devinhadley/gobootstrapweb/internal/db"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -24,6 +25,7 @@ func TestCreateSession(t *testing.T) {
 
 func TestRotateSession(t *testing.T) {
 	t.Run("rotates session id", testRotateSession)
+	t.Run("returns session not found when session is missing", testRotateSessionReturnsSessionNotFound)
 	t.Run("returns update error", testRotateSessionReturnsUpdateError)
 }
 
@@ -34,8 +36,8 @@ func TestIsSessionExpired(t *testing.T) {
 }
 
 func TestShouldRotateSession(t *testing.T) {
-	t.Run("returns false when rotation not required", testShouldRotateSessionFalse)
 	t.Run("returns true when rotation is required", testShouldRotateSessionTrue)
+	t.Run("returns false when rotation not required", testShouldRotateSessionFalse)
 }
 
 func TestUpdateLastSeen(t *testing.T) {
@@ -86,15 +88,17 @@ func testCreateValidSession(t *testing.T) {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 
-	if session.UserID != user.ID {
-		t.Fatalf("got user id %v, want %v", session.UserID, user.ID)
+	rawSession := session.DBSession()
+
+	if rawSession.UserID != user.ID {
+		t.Fatalf("got user id %v, want %v", rawSession.UserID, user.ID)
 	}
 
-	if len(session.ID) != 16 {
-		t.Fatalf("got id length %d, want %d", len(session.ID), 16)
+	if len(rawSession.ID) != 16 {
+		t.Fatalf("got id length %d, want %d", len(rawSession.ID), 16)
 	}
 
-	if !bytes.Equal(session.ID, createSessionArg.ID) {
+	if !bytes.Equal(rawSession.ID, createSessionArg.ID) {
 		t.Fatal("returned session id does not match id passed to CreateSession")
 	}
 }
@@ -249,15 +253,17 @@ func testRotateSession(t *testing.T) {
 		t.Fatalf("RotateSession returned error: %v", err)
 	}
 
-	if len(updatedSessionResult.ID) != 16 {
-		t.Fatalf("got rotated id length %d, want %d", len(updatedSessionResult.ID), 16)
+	rawUpdatedSession := updatedSessionResult.DBSession()
+
+	if len(rawUpdatedSession.ID) != 16 {
+		t.Fatalf("got rotated id length %d, want %d", len(rawUpdatedSession.ID), 16)
 	}
 
-	if !bytes.Equal(updatedSessionResult.ID, updateSessionIDArg.ID_2) {
+	if !bytes.Equal(rawUpdatedSession.ID, updateSessionIDArg.ID_2) {
 		t.Fatal("returned rotated session id does not match id passed to UpdateSessionIDByID")
 	}
 
-	if bytes.Equal(updatedSessionResult.ID, originalID) {
+	if bytes.Equal(rawUpdatedSession.ID, originalID) {
 		t.Fatal("original id matches rotated session id.")
 	}
 }
@@ -279,65 +285,71 @@ func testRotateSessionReturnsUpdateError(t *testing.T) {
 	}
 }
 
-func testIsSessionExpiredFalseForActiveSession(t *testing.T) {
-	sessionService := NewSessionService(&mockSessionQueries{})
+func testRotateSessionReturnsSessionNotFound(t *testing.T) {
+	ctx := context.Background()
+	originalID := []byte("missing-session-id")
 
+	sessionService := NewSessionService(&mockSessionQueries{
+		UpdateSessionIDByIDFn: func(ctx context.Context, arg db.UpdateSessionIDByIDParams) (db.Session, error) {
+			return db.Session{}, pgx.ErrNoRows
+		},
+	})
+
+	_, err := sessionService.RotateSession(ctx, originalID)
+	if !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("got error %v, want %v", err, ErrSessionNotFound)
+	}
+}
+
+func testIsSessionExpiredFalseForActiveSession(t *testing.T) {
 	session := db.Session{
 		CreatedAt:  pgtype.Timestamptz{Time: time.Now().AddDate(0, 0, -10), Valid: true},
 		LastSeenAt: pgtype.Timestamptz{Time: time.Now().AddDate(0, 0, -1), Valid: true},
 	}
 
-	if sessionService.IsSessionExpired(session) {
+	if SessionFromDB(session).IsExpired() {
 		t.Fatal("expected session to be active")
 	}
 }
 
 func testIsSessionExpiredTrueForAbsoluteExpiration(t *testing.T) {
-	sessionService := NewSessionService(&mockSessionQueries{})
-
 	session := db.Session{
 		CreatedAt:  pgtype.Timestamptz{Time: time.Now().AddDate(0, 0, -91), Valid: true},
 		LastSeenAt: pgtype.Timestamptz{Time: time.Now().AddDate(0, 0, -1), Valid: true},
 	}
 
-	if !sessionService.IsSessionExpired(session) {
+	if !SessionFromDB(session).IsExpired() {
 		t.Fatal("expected session to be expired by absolute expiration")
 	}
 }
 
 func testIsSessionExpiredTrueForIdleExpiration(t *testing.T) {
-	sessionService := NewSessionService(&mockSessionQueries{})
-
 	session := db.Session{
 		CreatedAt:  pgtype.Timestamptz{Time: time.Now().AddDate(0, 0, -10), Valid: true},
 		LastSeenAt: pgtype.Timestamptz{Time: time.Now().AddDate(0, 0, -15), Valid: true},
 	}
 
-	if !sessionService.IsSessionExpired(session) {
+	if !SessionFromDB(session).IsExpired() {
 		t.Fatal("expected session to be expired by idle expiration")
 	}
 }
 
 func testShouldRotateSessionFalse(t *testing.T) {
-	sessionService := NewSessionService(&mockSessionQueries{})
-
 	session := db.Session{
 		LastRefreshedAt: pgtype.Timestamptz{Time: time.Now().AddDate(0, 0, -1), Valid: true},
 	}
 
-	if sessionService.ShouldRotateSession(session) {
+	if SessionFromDB(session).ShouldRotate() {
 		t.Fatal("expected session rotation not to be required")
 	}
 }
 
 func testShouldRotateSessionTrue(t *testing.T) {
-	sessionService := NewSessionService(&mockSessionQueries{})
-
 	session := db.Session{
 		LastRefreshedAt: pgtype.Timestamptz{Time: time.Now().AddDate(0, 0, -8), Valid: true},
 	}
 
-	if !sessionService.ShouldRotateSession(session) {
+	if !SessionFromDB(session).ShouldRotate() {
 		t.Fatal("expected session rotation to be required")
 	}
 }
@@ -358,7 +370,7 @@ func testUpdateLastSeenDoesNotUpdateBeforeThreshold(t *testing.T) {
 		LastSeenAt: pgtype.Timestamptz{Time: time.Now().Add(-(20 * time.Minute) + time.Second), Valid: true},
 	}
 
-	err := sessionService.UpdateLastSeen(ctx, session)
+	err := sessionService.UpdateLastSeen(ctx, SessionFromDB(session))
 	if err != nil {
 		t.Fatalf("UpdateLastSeen returned error: %v", err)
 	}
@@ -393,7 +405,7 @@ func testUpdateLastSeenUpdatesAfterThreshold(t *testing.T) {
 		},
 	})
 
-	err := sessionService.UpdateLastSeen(ctx, session)
+	err := sessionService.UpdateLastSeen(ctx, SessionFromDB(session))
 	if err != nil {
 		t.Fatalf("UpdateLastSeen returned error: %v", err)
 	}
@@ -426,7 +438,7 @@ func testUpdateLastSeenReturnsUpdateError(t *testing.T) {
 		},
 	})
 
-	err := sessionService.UpdateLastSeen(ctx, session)
+	err := sessionService.UpdateLastSeen(ctx, SessionFromDB(session))
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("got error %v, want %v", err, wantErr)
 	}

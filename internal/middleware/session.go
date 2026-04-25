@@ -70,8 +70,10 @@ func CreateSessionMiddleware(userService service.UserService, sessionService ser
 			return
 		}
 
-		if sessionService.IsSessionExpired(session) {
-			err = sessionService.ExpireSession(r.Context(), session.ID)
+		dbSession := session.DBSession()
+
+		if session.IsExpired() {
+			err = sessionService.ExpireSession(r.Context(), dbSession.ID)
 			if err != nil {
 				log.Printf("Error when expiring session: %v", err)
 			}
@@ -80,21 +82,27 @@ func CreateSessionMiddleware(userService service.UserService, sessionService ser
 			return
 		}
 
-		if sessionService.ShouldRotateSession(session) {
-			session, err = sessionService.RotateSession(r.Context(), session.ID)
+		if session.ShouldRotate() {
+			session, err = sessionService.RotateSession(r.Context(), dbSession.ID)
 			if err != nil {
 				log.Printf("Error when rotating session: %v", err)
 				next.ServeHTTP(w, r)
+				return
 			}
-			utils.AddSessionToCookie(w, &session)
+			dbSession = session.DBSession()
+			utils.AddSessionToCookie(w, dbSession.ID, session.GetAbsoluteExpiration())
 		}
 
-		// NOTE: This can make session stale!
-		sessionService.UpdateLastSeen(r.Context(), session)
+		err = sessionService.UpdateLastSeen(r.Context(), session)
+		if err != nil {
+			log.Printf("Error when last seen for session: %v", err)
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		// Add a closure to the context which fetches, caches, and returns the current user.
 		requestCtx := r.Context()
-		userID := session.UserID
+		userID := dbSession.UserID
 
 		var (
 			currentUser           *db.User

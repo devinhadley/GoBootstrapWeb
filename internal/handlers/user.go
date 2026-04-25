@@ -51,7 +51,8 @@ func CreateSignUpHandler(userService *service.UserService, sessionService *servi
 			return
 		}
 
-		utils.AddSessionToCookie(w, &session)
+		rawSession := session.DBSession()
+		utils.AddSessionToCookie(w, rawSession.ID, session.GetAbsoluteExpiration())
 
 		w.WriteHeader(http.StatusOK)
 	}
@@ -95,7 +96,7 @@ func CreateLoginHandler(userService *service.UserService, sessionService *servic
 
 		}
 
-		// Set session...
+		// Setup session...
 		w.WriteHeader(http.StatusOK)
 		// TODO: Setup session cookie.
 	}

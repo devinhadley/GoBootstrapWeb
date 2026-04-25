@@ -15,6 +15,8 @@ import (
 	"github.com/matthewhartstonge/argon2"
 )
 
+// TODO: Add weak password validation!
+
 var (
 	ErrInvalidSignUpInput = errors.New("invalid sign-up input")
 	ErrInvalidLogInInput  = errors.New("invalid log-in input")

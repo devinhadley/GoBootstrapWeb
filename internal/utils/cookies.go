@@ -4,18 +4,14 @@ import (
 	"encoding/base64"
 	"net/http"
 	"time"
-
-	"devinhadley/gobootstrapweb/internal/db"
 )
 
 const (
-	sessionIDCookieName         = "id"
-	absoluteSessionExpiryMonths = 3
+	sessionIDCookieName = "id"
 )
 
-func AddSessionToCookie(w http.ResponseWriter, session *db.Session) {
-	base64SessionID := base64.StdEncoding.EncodeToString(session.ID)
-	absoluteExpiration := time.Now().AddDate(0, absoluteSessionExpiryMonths, 0)
+func AddSessionToCookie(w http.ResponseWriter, sessionID []byte, absoluteExpiration time.Time) {
+	base64SessionID := base64.StdEncoding.EncodeToString(sessionID)
 
 	cookie := http.Cookie{
 		Name:     sessionIDCookieName,
