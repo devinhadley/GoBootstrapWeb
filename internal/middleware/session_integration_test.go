@@ -15,7 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestValidSession(t *testing.T) {
+func TestSessionMiddlewareCanAuthenticateIntegration(t *testing.T) {
+	t.Run("valid session makes it so user can be accessed in handler", testValidSessionAuthenticatesCorrectUser)
 }
 
 func TestExpiredSession(t *testing.T) {

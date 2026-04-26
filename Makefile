@@ -62,4 +62,4 @@ test-integration: ## Run integration tests against integration DB
 		trap 'docker compose stop postgres_integration_test >/dev/null 2>&1; docker compose rm -f postgres_integration_test >/dev/null 2>&1' EXIT; \
 		until docker compose exec -T postgres_integration_test pg_isready -U integration_user -d gobootstrapweb_test >/dev/null 2>&1; do sleep 1; done; \
 		GOOSE_DBSTRING="$${INTEGRATION_TEST_DB_DSN}" goose -dir "$${GOOSE_MIGRATION_DIR}" up; \
-		go test ./internal/handlers -run Integration
+		go test ./internal/... -run Integration
