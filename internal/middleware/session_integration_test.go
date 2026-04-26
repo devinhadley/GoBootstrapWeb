@@ -2,11 +2,13 @@ package middleware
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"testing"
 
 	"devinhadley/gobootstrapweb/internal/db"
-	"devinhadley/gobootstrapweb/internal/service"
+	"devinhadley/gobootstrapweb/internal/service/session"
+	"devinhadley/gobootstrapweb/internal/service/user"
 	"devinhadley/gobootstrapweb/internal/utils"
 	"devinhadley/gobootstrapweb/internal/utils/testutil"
 
@@ -22,7 +24,7 @@ func TestExpiredSession(t *testing.T) {
 func testValidSessionAuthenticatesCorrectUser(t *testing.T) {
 	deps := getTestDependencies(t)
 
-	createdUser, err := deps.userService.SignUp(context.Background(), service.AuthenticateBody{
+	createdUser, err := deps.userService.SignUp(context.Background(), user.AuthenticateBody{
 		Email:    "test@example.com",
 		Password: "a-password-!-9999",
 	})
@@ -50,8 +52,8 @@ func testValidSessionAuthenticatesCorrectUser(t *testing.T) {
 	sessionMiddleware := CreateSessionMiddleware(deps.userService, deps.sessionService, handler)
 
 	sessionCookie := http.Cookie{
-		Name:     "session-id",
-		Value:    "a-session-id",
+		Name:     "id",
+		Value:    base64.StdEncoding.EncodeToString(session.DBSession().ID),
 		Expires:  session.GetAbsoluteExpiration(),
 		HttpOnly: true,
 		Path:     "/",
@@ -66,8 +68,8 @@ func testValidSessionAuthenticatesCorrectUser(t *testing.T) {
 }
 
 type sessionIntegrationTestDependencies struct {
-	userService    service.UserService
-	sessionService service.SessionService
+	userService    user.Service
+	sessionService session.Service
 	queries        db.Queries
 }
 
@@ -91,5 +93,5 @@ func getTestDependencies(t *testing.T) sessionIntegrationTestDependencies {
 
 	queries := db.New(pool)
 
-	return sessionIntegrationTestDependencies{queries: *queries, userService: *service.NewUserService(queries), sessionService: *service.NewSessionService(queries)}
+	return sessionIntegrationTestDependencies{queries: *queries, userService: *user.NewService(queries), sessionService: *session.NewService(queries)}
 }

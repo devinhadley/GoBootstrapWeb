@@ -1,6 +1,5 @@
-// Package service contains all application logic and validation for handlers.
-// Services are segmented by corresponding DB table.
-package service
+// Package user contains user-related application logic and validation.
+package user
 
 import (
 	"context"
@@ -32,7 +31,7 @@ type UserQueries interface {
 	GetUserByID(ctx context.Context, id int64) (db.User, error)
 }
 
-type UserService struct {
+type Service struct {
 	queries UserQueries
 }
 
@@ -41,8 +40,8 @@ type AuthenticateBody struct {
 	Password string `json:"password"`
 }
 
-func NewUserService(queries UserQueries) *UserService {
-	return &UserService{queries: queries}
+func NewService(queries UserQueries) *Service {
+	return &Service{queries: queries}
 }
 
 func trimAndRequireValue(value string) (string, bool) {
@@ -54,7 +53,7 @@ func trimAndRequireValue(value string) (string, bool) {
 	return trimmed, true
 }
 
-func (s *UserService) SignUp(ctx context.Context, input AuthenticateBody) (db.User, error) {
+func (s *Service) SignUp(ctx context.Context, input AuthenticateBody) (db.User, error) {
 	email, ok := trimAndRequireValue(input.Email)
 	if !ok {
 		return db.User{}, ErrInvalidSignUpInput
@@ -95,7 +94,7 @@ func (s *UserService) SignUp(ctx context.Context, input AuthenticateBody) (db.Us
 	return user, nil
 }
 
-func (s *UserService) LogIn(ctx context.Context, input AuthenticateBody) (db.User, error) {
+func (s *Service) LogIn(ctx context.Context, input AuthenticateBody) (db.User, error) {
 	email, ok := trimAndRequireValue(input.Email)
 	if !ok {
 		return db.User{}, ErrInvalidLogInInput
@@ -130,6 +129,6 @@ func (s *UserService) LogIn(ctx context.Context, input AuthenticateBody) (db.Use
 	return user, nil
 }
 
-func (s *UserService) GetUserByID(ctx context.Context, id int64) (db.User, error) {
+func (s *Service) GetUserByID(ctx context.Context, id int64) (db.User, error) {
 	return s.queries.GetUserByID(ctx, id)
 }

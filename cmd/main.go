@@ -7,7 +7,8 @@ import (
 
 	"devinhadley/gobootstrapweb/internal/db"
 	"devinhadley/gobootstrapweb/internal/handlers"
-	"devinhadley/gobootstrapweb/internal/service"
+	"devinhadley/gobootstrapweb/internal/service/session"
+	"devinhadley/gobootstrapweb/internal/service/user"
 	"devinhadley/gobootstrapweb/internal/utils"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,8 +27,8 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	userService := service.NewUserService(queries)
-	sessionService := service.NewSessionService(queries)
+	userService := user.NewService(queries)
+	sessionService := session.NewService(queries)
 
 	mux.Handle("POST /signup", handlers.CreateSignUpHandler(userService, sessionService))
 	mux.Handle("POST /login", handlers.CreateSignUpHandler(userService, sessionService))

@@ -9,7 +9,8 @@ import (
 	"testing"
 
 	"devinhadley/gobootstrapweb/internal/db"
-	"devinhadley/gobootstrapweb/internal/service"
+	"devinhadley/gobootstrapweb/internal/service/session"
+	"devinhadley/gobootstrapweb/internal/service/user"
 	"devinhadley/gobootstrapweb/internal/utils/testutil"
 
 	"github.com/jackc/pgx/v5"
@@ -21,7 +22,7 @@ import (
 type userIntegrationDeps struct {
 	pool        *pgxpool.Pool
 	queries     *db.Queries
-	userService *service.UserService
+	userService *user.Service
 	signUp      http.HandlerFunc
 	login       http.HandlerFunc
 }
@@ -182,7 +183,7 @@ func testSignUpRejectsInvalidEmail(t *testing.T) {
 func testLogInSucceeds(t *testing.T) {
 	deps := setupUserIntegrationDeps(t)
 
-	_, err := deps.userService.SignUp(context.Background(), service.AuthenticateBody{
+	_, err := deps.userService.SignUp(context.Background(), user.AuthenticateBody{
 		Email:    "test@example.com",
 		Password: "example-password",
 	})
@@ -254,7 +255,7 @@ func testLogInReturnsBadRequestWhenUserDoesNotExist(t *testing.T) {
 func testLogInReturnsBadRequestWhenPasswordIsIncorrect(t *testing.T) {
 	deps := setupUserIntegrationDeps(t)
 
-	_, err := deps.userService.SignUp(context.Background(), service.AuthenticateBody{
+	_, err := deps.userService.SignUp(context.Background(), user.AuthenticateBody{
 		Email:    "wrong-password@example.com",
 		Password: "correct-password",
 	})
@@ -298,8 +299,8 @@ func setupUserIntegrationDeps(t *testing.T) userIntegrationDeps {
 	})
 
 	queries := db.New(pool)
-	userService := service.NewUserService(queries)
-	sessionService := service.NewSessionService(queries)
+	userService := user.NewService(queries)
+	sessionService := session.NewService(queries)
 
 	return userIntegrationDeps{
 		pool:        pool,

@@ -5,13 +5,14 @@ import (
 	"errors"
 	"net/http"
 
-	"devinhadley/gobootstrapweb/internal/service"
+	"devinhadley/gobootstrapweb/internal/service/session"
+	"devinhadley/gobootstrapweb/internal/service/user"
 	"devinhadley/gobootstrapweb/internal/utils"
 )
 
-func CreateSignUpHandler(userService *service.UserService, sessionService *service.SessionService) http.HandlerFunc {
+func CreateSignUpHandler(userService *user.Service, sessionService *session.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var reqBody service.AuthenticateBody
+		var reqBody user.AuthenticateBody
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 
@@ -21,22 +22,22 @@ func CreateSignUpHandler(userService *service.UserService, sessionService *servi
 			return
 		}
 
-		user, err := userService.SignUp(r.Context(), service.AuthenticateBody{
+		createdUser, err := userService.SignUp(r.Context(), user.AuthenticateBody{
 			Email:    reqBody.Email,
 			Password: reqBody.Password,
 		})
 		if err != nil {
-			if errors.Is(err, service.ErrInvalidSignUpInput) {
+			if errors.Is(err, user.ErrInvalidSignUpInput) {
 				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "email and password may not be blank"})
 				return
 			}
 
-			if errors.Is(err, service.ErrInvalidEmail) {
+			if errors.Is(err, user.ErrInvalidEmail) {
 				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email is not valid"})
 				return
 			}
 
-			if errors.Is(err, service.ErrEmailTaken) {
+			if errors.Is(err, user.ErrEmailTaken) {
 				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email already in use"})
 				return
 			}
@@ -45,22 +46,22 @@ func CreateSignUpHandler(userService *service.UserService, sessionService *servi
 			return
 		}
 
-		session, err := sessionService.CreateSession(r.Context(), user)
+		createdSession, err := sessionService.CreateSession(r.Context(), createdUser)
 		if err != nil {
 			utils.WriteAndReportInternalError(w)
 			return
 		}
 
-		rawSession := session.DBSession()
-		utils.AddSessionToCookie(w, rawSession.ID, session.GetAbsoluteExpiration())
+		rawSession := createdSession.DBSession()
+		utils.AddSessionToCookie(w, rawSession.ID, createdSession.GetAbsoluteExpiration())
 
 		w.WriteHeader(http.StatusOK)
 	}
 }
 
-func CreateLoginHandler(userService *service.UserService, sessionService *service.SessionService) http.HandlerFunc {
+func CreateLoginHandler(userService *user.Service, sessionService *session.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var reqBody service.AuthenticateBody
+		var reqBody user.AuthenticateBody
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 
@@ -70,23 +71,23 @@ func CreateLoginHandler(userService *service.UserService, sessionService *servic
 			return
 		}
 
-		_, err = userService.LogIn(r.Context(), service.AuthenticateBody{
+		_, err = userService.LogIn(r.Context(), user.AuthenticateBody{
 			Email:    reqBody.Email,
 			Password: reqBody.Password,
 		})
 		if err != nil {
 
-			if errors.Is(err, service.ErrInvalidCredentials) {
+			if errors.Is(err, user.ErrInvalidCredentials) {
 				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "authentication failed"})
 				return
 			}
 
-			if errors.Is(err, service.ErrInvalidLogInInput) {
+			if errors.Is(err, user.ErrInvalidLogInInput) {
 				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "email and password may not be blank"})
 				return
 			}
 
-			if errors.Is(err, service.ErrInvalidEmail) {
+			if errors.Is(err, user.ErrInvalidEmail) {
 				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email is not valid"})
 				return
 			}

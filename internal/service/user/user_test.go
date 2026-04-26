@@ -1,4 +1,4 @@
-package service
+package user
 
 import (
 	"context"
@@ -400,9 +400,9 @@ func testGetUserByIDPropagatesError(t *testing.T) {
 	}
 }
 
-func setupUserService(t *testing.T, mockedQueries MockUserQueries) *UserService {
+func setupUserService(t *testing.T, mockedQueries MockUserQueries) *Service {
 	t.Helper()
-	return NewUserService(&mockedQueries)
+	return NewService(&mockedQueries)
 }
 
 // Mocks...

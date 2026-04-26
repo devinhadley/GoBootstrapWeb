@@ -8,7 +8,8 @@ import (
 	"net/http"
 
 	"devinhadley/gobootstrapweb/internal/db"
-	"devinhadley/gobootstrapweb/internal/service"
+	"devinhadley/gobootstrapweb/internal/service/session"
+	"devinhadley/gobootstrapweb/internal/service/user"
 	"devinhadley/gobootstrapweb/internal/utils"
 
 	"github.com/jackc/pgx/v5"
@@ -39,7 +40,7 @@ func UserFromContext(ctx context.Context) (db.User, error) {
 }
 
 // CreateSessionMiddleware creates an http handler which uses the id (session id) cookie to expire sessions, rotate sessions, and authenticate the user.
-func CreateSessionMiddleware(userService service.UserService, sessionService service.SessionService, next http.HandlerFunc) http.HandlerFunc {
+func CreateSessionMiddleware(userService user.Service, sessionService session.Service, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionCookie, err := r.Cookie("id")
 		if err != nil {
