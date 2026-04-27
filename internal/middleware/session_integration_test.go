@@ -17,9 +17,26 @@ import (
 
 func TestSessionMiddlewareCanAuthenticateIntegration(t *testing.T) {
 	t.Run("valid session makes it so user can be accessed in handler", testValidSessionAuthenticatesCorrectUser)
+	t.Run("no session cookie continues to next handler unauthenticated", needsImplemented)
+	t.Run("malformed base64 session cookie continues unauthenticated", needsImplemented)
+	t.Run("well-formed session id not found continues unauthenticated", needsImplemented)
 }
 
-func TestExpiredSession(t *testing.T) {
+func TestExpiredSessionIntegration(t *testing.T) {
+	t.Run("absolute expired session does not authenticate and deletes session", needsImplemented)
+	t.Run("idle expired session does not authenticate and deletes session", needsImplemented)
+	t.Run("expired session clears cookie", needsImplemented)
+}
+
+func TestRotateSessionIntegration(t *testing.T) {
+	t.Run("session outside rotation threshold rotates and sets new cookie", needsImplemented)
+	t.Run("session inside rotation threshold does not rotate", needsImplemented)
+	t.Run("rotate session error continues without rotated cookie", needsImplemented)
+}
+
+func TestUpdateLastSeenIntegration(t *testing.T) {
+	t.Run("update last seen is skipped when threshold not reached", needsImplemented)
+	t.Run("update last seen succeeds when threshold reached", needsImplemented)
 }
 
 func testValidSessionAuthenticatesCorrectUser(t *testing.T) {
@@ -50,7 +67,7 @@ func testValidSessionAuthenticatesCorrectUser(t *testing.T) {
 		utils.WriteJSONResponse(w, http.StatusOK, map[string]any{"status": "ok"})
 	}
 
-	sessionMiddleware := CreateSessionMiddleware(deps.userService, deps.sessionService, handler)
+	sessionMiddleware := CreateSessionMiddleware(&deps.userService, &deps.sessionService, handler)
 
 	sessionCookie := http.Cookie{
 		Name:     "id",
@@ -66,6 +83,10 @@ func testValidSessionAuthenticatesCorrectUser(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected status ok, got %v", res.Code)
 	}
+}
+
+func needsImplemented(t *testing.T) {
+	t.Skip("needs implemented")
 }
 
 type sessionIntegrationTestDependencies struct {

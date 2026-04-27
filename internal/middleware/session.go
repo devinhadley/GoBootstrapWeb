@@ -40,7 +40,7 @@ func UserFromContext(ctx context.Context) (db.User, error) {
 }
 
 // CreateSessionMiddleware creates an http handler which uses the id (session id) cookie to expire sessions, rotate sessions, and authenticate the user.
-func CreateSessionMiddleware(userService user.Service, sessionService session.Service, next http.HandlerFunc) http.HandlerFunc {
+func CreateSessionMiddleware(userService *user.Service, sessionService *session.Service, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionCookie, err := r.Cookie("id")
 		if err != nil {
@@ -83,6 +83,8 @@ func CreateSessionMiddleware(userService user.Service, sessionService session.Se
 			return
 		}
 
+		// NOTE: Rotating and updating last seen can make session stale.
+		// If doing work past this point will need to store return values.
 		if session.ShouldRotate() {
 			session, err = sessionService.RotateSession(r.Context(), dbSession.ID)
 			if err != nil {
@@ -90,47 +92,44 @@ func CreateSessionMiddleware(userService user.Service, sessionService session.Se
 				next.ServeHTTP(w, r)
 				return
 			}
-			dbSession = session.DBSession()
 			utils.AddSessionToCookie(w, dbSession.ID, session.GetAbsoluteExpiration())
 		}
 
 		err = sessionService.UpdateLastSeen(r.Context(), session)
 		if err != nil {
-			log.Printf("Error when last seen for session: %v", err)
-			next.ServeHTTP(w, r)
-			return
+			log.Printf("Error when updating last seen for session: %v", err)
 		}
 
-		// Add a closure to the context which fetches, caches, and returns the current user.
+		// Add a closure to the context which allows lazy fetch of the current user.
 		requestCtx := r.Context()
-		userID := dbSession.UserID
-
-		var (
-			currentUser           *db.User
-			fetchCurrentUserError error
-		)
-
-		ctx := withGetUser(requestCtx, func() (db.User, error) {
-			if currentUser != nil {
-				return *currentUser, nil
-			}
-
-			if fetchCurrentUserError != nil {
-				return db.User{}, fetchCurrentUserError
-			}
-
-			user, err := userService.GetUserByID(requestCtx, userID)
-			if err != nil {
-				fetchCurrentUserError = err
-				return db.User{}, err
-			}
-
-			currentUser = &user
-
-			return user, nil
-		})
+		ctx := withGetUser(requestCtx, createGetUserFunc(dbSession.UserID, userService, requestCtx))
 		r = r.WithContext(ctx)
 
 		next.ServeHTTP(w, r)
+	}
+}
+
+func createGetUserFunc(userID int64, userService *user.Service, ctx context.Context) func() (db.User, error) {
+	var currentUser *db.User
+	var fetchCurrentUserError error
+
+	return func() (db.User, error) {
+		if currentUser != nil {
+			return *currentUser, nil
+		}
+
+		if fetchCurrentUserError != nil {
+			return db.User{}, fetchCurrentUserError
+		}
+
+		user, err := userService.GetUserByID(ctx, userID)
+		if err != nil {
+			fetchCurrentUserError = err
+			return db.User{}, err
+		}
+
+		currentUser = &user
+
+		return user, nil
 	}
 }
