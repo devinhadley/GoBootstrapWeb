@@ -72,14 +72,15 @@ func testUserSignUpRejectsBlankEmailOrPassword(t *testing.T) {
 	})
 
 	testCases := []struct {
-		name     string
-		email    string
-		password string
+		name          string
+		email         string
+		password      string
+		expectedError error
 	}{
-		{name: "empty email", email: "", password: "example-password"},
-		{name: "whitespace email", email: "   ", password: "example-password"},
-		{name: "empty password", email: "test@example.com", password: ""},
-		{name: "whitespace password", email: "test@example.com", password: "   "},
+		{name: "empty email", email: "", password: "example-password", expectedError: ErrInvalidSignUpInput},
+		{name: "whitespace email", email: "   ", password: "example-password", expectedError: ErrInvalidSignUpInput},
+		{name: "empty password", email: "test@example.com", password: "", expectedError: ErrPasswordEmpty},
+		{name: "whitespace password", email: "test@example.com", password: "   ", expectedError: ErrPasswordEmpty},
 	}
 
 	for _, tc := range testCases {
@@ -89,8 +90,8 @@ func testUserSignUpRejectsBlankEmailOrPassword(t *testing.T) {
 				Password: tc.password,
 			})
 
-			if !errors.Is(err, ErrInvalidSignUpInput) {
-				t.Fatalf("got error %v, want %v", err, ErrInvalidSignUpInput)
+			if !errors.Is(err, tc.expectedError) {
+				t.Fatalf("got error %v, want %v", err, tc.expectedError)
 			}
 		})
 	}

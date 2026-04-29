@@ -24,10 +24,10 @@ var (
 	ErrInvalidEmail       = errors.New("email is not valid")
 	ErrPasswordHashing    = errors.New("password hashing not implemented")
 	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrorPasswordEmpty    = errors.New("password cannot be empty")
-	ErrorPasswordShort    = errors.New("password cannot be empty")
-	ErrorPasswordLong     = errors.New("password cannot be empty")
-	ErrorPasswordCommon   = errors.New("password is too common")
+	ErrPasswordEmpty      = errors.New("password cannot be empty")
+	ErrPasswordShort      = errors.New("password cannot be empty")
+	ErrPasswordLong       = errors.New("password cannot be empty")
+	ErrPasswordCommon     = errors.New("password is too common")
 )
 
 type UserQueries interface {
@@ -149,19 +149,19 @@ func isEmpty(value string) bool {
 // TODO: Review OWASP and implement.
 func (s *Service) isValidPassword(password string) error {
 	if strings.TrimSpace(password) == "" {
-		return ErrorPasswordEmpty
+		return ErrPasswordEmpty
 	}
 
 	if utf8.RuneCountInString(password) < 12 {
-		return ErrorPasswordShort
+		return ErrPasswordShort
 	}
 
 	if utf8.RuneCountInString(password) > 256 {
-		return ErrorPasswordLong
+		return ErrPasswordLong
 	}
 
 	if s.commonPasswords.isCommonPassword(password) {
-		return ErrorPasswordCommon
+		return ErrPasswordCommon
 	}
 
 	return nil
