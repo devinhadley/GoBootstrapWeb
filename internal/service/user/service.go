@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"devinhadley/gobootstrapweb/internal/db"
 	"devinhadley/gobootstrapweb/internal/utils"
@@ -23,6 +24,10 @@ var (
 	ErrInvalidEmail       = errors.New("email is not valid")
 	ErrPasswordHashing    = errors.New("password hashing not implemented")
 	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrorPasswordEmpty    = errors.New("password cannot be empty")
+	ErrorPasswordShort    = errors.New("password cannot be empty")
+	ErrorPasswordLong     = errors.New("password cannot be empty")
+	ErrorPasswordCommon   = errors.New("password is too common")
 )
 
 type UserQueries interface {
@@ -32,7 +37,8 @@ type UserQueries interface {
 }
 
 type Service struct {
-	queries UserQueries
+	queries         UserQueries
+	commonPasswords commonPasswords
 }
 
 type AuthenticateBody struct {
@@ -41,27 +47,19 @@ type AuthenticateBody struct {
 }
 
 func NewService(queries UserQueries) *Service {
-	return &Service{queries: queries}
+	return &Service{queries: queries, commonPasswords: getCommonPasswords()}
 }
 
-func trimAndRequireValue(value string) (string, bool) {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return "", false
-	}
-
-	return trimmed, true
-}
-
+// TODO: Add common passwords test.
 func (s *Service) SignUp(ctx context.Context, input AuthenticateBody) (db.User, error) {
 	email, ok := trimAndRequireValue(input.Email)
 	if !ok {
 		return db.User{}, ErrInvalidSignUpInput
 	}
 
-	password, ok := trimAndRequireValue(input.Password)
-	if !ok {
-		return db.User{}, ErrInvalidSignUpInput
+	err := s.isValidPassword(input.Password)
+	if err != nil {
+		return db.User{}, err
 	}
 
 	ok, email = utils.NormalizeAndValidateEmail(email)
@@ -71,7 +69,7 @@ func (s *Service) SignUp(ctx context.Context, input AuthenticateBody) (db.User, 
 
 	argon := argon2.MemoryConstrainedDefaults()
 
-	passwordHash, err := argon.HashEncoded([]byte(password))
+	passwordHash, err := argon.HashEncoded([]byte(input.Password))
 	if err != nil {
 		return db.User{}, err
 	}
@@ -95,12 +93,13 @@ func (s *Service) SignUp(ctx context.Context, input AuthenticateBody) (db.User, 
 }
 
 func (s *Service) LogIn(ctx context.Context, input AuthenticateBody) (db.User, error) {
+	// TODO: If user not found, still verify a dummy hash to avoid timing attacks...
 	email, ok := trimAndRequireValue(input.Email)
 	if !ok {
 		return db.User{}, ErrInvalidLogInInput
 	}
 
-	password, ok := trimAndRequireValue(input.Password)
+	ok = !isEmpty(input.Password)
 	if !ok {
 		return db.User{}, ErrInvalidLogInInput
 	}
@@ -118,7 +117,7 @@ func (s *Service) LogIn(ctx context.Context, input AuthenticateBody) (db.User, e
 		return db.User{}, err
 	}
 
-	ok, err = argon2.VerifyEncoded([]byte(password), []byte(user.PasswordHash))
+	ok, err = argon2.VerifyEncoded([]byte(input.Password), []byte(user.PasswordHash))
 	if err != nil {
 		return db.User{}, err
 	}
@@ -131,4 +130,39 @@ func (s *Service) LogIn(ctx context.Context, input AuthenticateBody) (db.User, e
 
 func (s *Service) GetUserByID(ctx context.Context, id int64) (db.User, error) {
 	return s.queries.GetUserByID(ctx, id)
+}
+
+func trimAndRequireValue(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", false
+	}
+
+	return trimmed, true
+}
+
+func isEmpty(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return trimmed == ""
+}
+
+// TODO: Review OWASP and implement.
+func (s *Service) isValidPassword(password string) error {
+	if strings.TrimSpace(password) == "" {
+		return ErrorPasswordEmpty
+	}
+
+	if utf8.RuneCountInString(password) < 12 {
+		return ErrorPasswordShort
+	}
+
+	if utf8.RuneCountInString(password) > 256 {
+		return ErrorPasswordLong
+	}
+
+	if s.commonPasswords.isCommonPassword(password) {
+		return ErrorPasswordCommon
+	}
+
+	return nil
 }

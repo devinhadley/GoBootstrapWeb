@@ -20,6 +20,7 @@ func AddSessionToCookie(w http.ResponseWriter, sessionID []byte, absoluteExpirat
 		HttpOnly: true,
 		Path:     "/",
 		Secure:   isSessionCookieSecure(),
+		SameSite: http.SameSiteLaxMode,
 	}
 
 	http.SetCookie(w, &cookie)
@@ -34,6 +35,7 @@ func ClearSessionCookie(w http.ResponseWriter) {
 		HttpOnly: true,
 		Path:     "/",
 		Secure:   isSessionCookieSecure(),
+		SameSite: http.SameSiteLaxMode,
 	}
 
 	http.SetCookie(w, &cookie)

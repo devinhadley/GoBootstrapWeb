@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -17,9 +18,9 @@ import (
 
 func TestSessionMiddlewareCanAuthenticateIntegration(t *testing.T) {
 	t.Run("valid session makes it so user can be accessed in handler", testValidSessionAuthenticatesCorrectUser)
-	t.Run("no session cookie continues to next handler unauthenticated", needsImplemented)
-	t.Run("malformed base64 session cookie continues unauthenticated", needsImplemented)
-	t.Run("well-formed session id not found continues unauthenticated", needsImplemented)
+	t.Run("no session cookie continues to next handler unauthenticated", testNoSessionCookieContinuesUnauthenticated)
+	t.Run("malformed base64 session cookie continues unauthenticated", testMalformedSessionCookieContinuesUnauthenticated)
+	t.Run("well-formed session id not found continues unauthenticated", testSessionIDNotFoundContinuesUnauthenticated)
 }
 
 func TestExpiredSessionIntegration(t *testing.T) {
@@ -82,6 +83,106 @@ func testValidSessionAuthenticatesCorrectUser(t *testing.T) {
 
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected status ok, got %v", res.Code)
+	}
+}
+
+func testNoSessionCookieContinuesUnauthenticated(t *testing.T) {
+	deps := getTestDependencies(t)
+	handlerCalled := false
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+
+		_, err := UserFromContext(r.Context())
+		if !errors.Is(err, ErrUserNotInContext) {
+			t.Fatalf("expected error %v, got %v", ErrUserNotInContext, err)
+		}
+
+		utils.WriteJSONResponse(w, http.StatusOK, map[string]any{"status": "ok"})
+	}
+
+	sessionMiddleware := CreateSessionMiddleware(&deps.userService, &deps.sessionService, handler)
+
+	res := testutil.PerformJSONRequest(sessionMiddleware, http.MethodGet, "/test", map[string]any{})
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status ok, got %v", res.Code)
+	}
+
+	if !handlerCalled {
+		t.Fatal("expected next handler to be called")
+	}
+}
+
+func testMalformedSessionCookieContinuesUnauthenticated(t *testing.T) {
+	deps := getTestDependencies(t)
+	handlerCalled := false
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+
+		_, err := UserFromContext(r.Context())
+		if !errors.Is(err, ErrUserNotInContext) {
+			t.Fatalf("expected error %v, got %v", ErrUserNotInContext, err)
+		}
+
+		utils.WriteJSONResponse(w, http.StatusOK, map[string]any{"status": "ok"})
+	}
+
+	sessionMiddleware := CreateSessionMiddleware(&deps.userService, &deps.sessionService, handler)
+
+	sessionCookie := http.Cookie{
+		Name:     "id",
+		Value:    "!!!!",
+		HttpOnly: true,
+		Path:     "/",
+		Secure:   false,
+	}
+
+	res := testutil.PerformJSONRequest(sessionMiddleware, http.MethodGet, "/test", map[string]any{}, &sessionCookie)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status ok, got %v", res.Code)
+	}
+
+	if !handlerCalled {
+		t.Fatal("expected next handler to be called")
+	}
+}
+
+func testSessionIDNotFoundContinuesUnauthenticated(t *testing.T) {
+	deps := getTestDependencies(t)
+	handlerCalled := false
+
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+
+		_, err := UserFromContext(r.Context())
+		if !errors.Is(err, ErrUserNotInContext) {
+			t.Fatalf("expected error %v, got %v", ErrUserNotInContext, err)
+		}
+
+		utils.WriteJSONResponse(w, http.StatusOK, map[string]any{"status": "ok"})
+	}
+
+	sessionMiddleware := CreateSessionMiddleware(&deps.userService, &deps.sessionService, handler)
+
+	sessionCookie := http.Cookie{
+		Name:     "id",
+		Value:    base64.StdEncoding.EncodeToString([]byte("missing-session!")),
+		HttpOnly: true,
+		Path:     "/",
+		Secure:   false,
+	}
+
+	res := testutil.PerformJSONRequest(sessionMiddleware, http.MethodGet, "/test", map[string]any{}, &sessionCookie)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status ok, got %v", res.Code)
+	}
+
+	if !handlerCalled {
+		t.Fatal("expected next handler to be called")
 	}
 }
 

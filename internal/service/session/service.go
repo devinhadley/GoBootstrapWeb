@@ -98,6 +98,8 @@ func (s *Service) UpdateLastSeen(ctx context.Context, session Session) error {
 	return nil
 }
 
+// TODO: Wrap error with context.
+// I.e. rotate session: %v
 func (s *Service) RotateSession(ctx context.Context, sessionID []byte) (Session, error) {
 	rotatedSessionID, err := generateSessionID()
 	if err != nil {
