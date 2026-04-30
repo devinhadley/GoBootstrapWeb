@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"devinhadley/gobootstrapweb/internal/db"
@@ -15,6 +16,9 @@ import (
 func TestSignUp(t *testing.T) {
 	t.Run("user can sign up", testUserSignUp)
 	t.Run("sign up rejects blank email or password", testUserSignUpRejectsBlankEmailOrPassword)
+	t.Run("sign up rejects short password", testUserSignUpRejectsShortPassword)
+	t.Run("sign up rejects long password", testUserSignUpRejectsLongPassword)
+	t.Run("sign up rejects common password", testUserSignUpRejectsCommonPassword)
 	t.Run("sign up rejects invalid email", testUserSignUpRejectsInvalidEmail)
 	t.Run("sign up normalizes and trims email", testUserSignUpNormalizesAndTrimsEmail)
 	t.Run("sign up returns email taken when email already exists", testUserSignUpEmailTaken)
@@ -94,6 +98,65 @@ func testUserSignUpRejectsBlankEmailOrPassword(t *testing.T) {
 				t.Fatalf("got error %v, want %v", err, tc.expectedError)
 			}
 		})
+	}
+}
+
+func testUserSignUpRejectsShortPassword(t *testing.T) {
+	ctx := context.Background()
+	userService := setupUserService(t, MockUserQueries{
+		CreateUserFn: func(ctx context.Context, arg db.CreateUserParams) (db.User, error) {
+			t.Fatal("CreateUser should not be called for short password")
+			return db.User{}, nil
+		},
+	})
+
+	_, err := userService.SignUp(ctx, AuthenticateBody{
+		Email:    "test@example.com",
+		Password: "12345678901",
+	})
+
+	if !errors.Is(err, ErrPasswordShort) {
+		t.Fatalf("got error %v, want %v", err, ErrPasswordShort)
+	}
+}
+
+func testUserSignUpRejectsLongPassword(t *testing.T) {
+	ctx := context.Background()
+	userService := setupUserService(t, MockUserQueries{
+		CreateUserFn: func(ctx context.Context, arg db.CreateUserParams) (db.User, error) {
+			t.Fatal("CreateUser should not be called for long password")
+			return db.User{}, nil
+		},
+	})
+
+	_, err := userService.SignUp(ctx, AuthenticateBody{
+		Email:    "test@example.com",
+		Password: strings.Repeat("a", 257),
+	})
+
+	if !errors.Is(err, ErrPasswordLong) {
+		t.Fatalf("got error %v, want %v", err, ErrPasswordLong)
+	}
+}
+
+func testUserSignUpRejectsCommonPassword(t *testing.T) {
+	ctx := context.Background()
+	commonPassword := "thisiscommonpassword"
+	userService := setupUserService(t, MockUserQueries{
+		CreateUserFn: func(ctx context.Context, arg db.CreateUserParams) (db.User, error) {
+			t.Fatal("CreateUser should not be called for common password")
+			return db.User{}, nil
+		},
+	})
+	userService.commonPasswords = commonPasswords{commonPassword: struct{}{}}
+
+	_, err := userService.SignUp(ctx, AuthenticateBody{
+		Email:    "test@example.com",
+		Password: commonPassword,
+	})
+
+	if !errors.Is(err, ErrPasswordCommon) {
+		t.Fatalf("got error %v, want %v", err, ErrPasswordCommon)
 	}
 }
 

@@ -32,6 +32,11 @@ func CreateSignUpHandler(userService *user.Service, sessionService *session.Serv
 				return
 			}
 
+			if errors.Is(err, user.ErrEmailTaken) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email already in use"})
+				return
+			}
+
 			if errors.Is(err, user.ErrInvalidEmail) {
 				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email is not valid"})
 				return
@@ -39,6 +44,26 @@ func CreateSignUpHandler(userService *user.Service, sessionService *session.Serv
 
 			if errors.Is(err, user.ErrEmailTaken) {
 				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email already in use"})
+				return
+			}
+
+			if errors.Is(err, user.ErrPasswordEmpty) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"password": "password can't be empty"})
+				return
+			}
+
+			if errors.Is(err, user.ErrPasswordShort) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"password": "password must be 12 or more characters"})
+				return
+			}
+
+			if errors.Is(err, user.ErrPasswordLong) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"password": "password must be 256 charactrs or less"})
+				return
+			}
+
+			if errors.Is(err, user.ErrPasswordCommon) {
+				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"password": "password too common"})
 				return
 			}
 
@@ -91,6 +116,8 @@ func CreateLoginHandler(userService *user.Service, sessionService *session.Servi
 				utils.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email is not valid"})
 				return
 			}
+
+			// TODO: Handle remaining errors.
 
 			utils.WriteAndReportInternalError(w)
 			return

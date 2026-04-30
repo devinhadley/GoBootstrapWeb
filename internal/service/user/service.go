@@ -50,7 +50,6 @@ func NewService(queries UserQueries) *Service {
 	return &Service{queries: queries, commonPasswords: getCommonPasswords()}
 }
 
-// TODO: Add common passwords test.
 func (s *Service) SignUp(ctx context.Context, input AuthenticateBody) (db.User, error) {
 	email, ok := trimAndRequireValue(input.Email)
 	if !ok {
@@ -94,6 +93,7 @@ func (s *Service) SignUp(ctx context.Context, input AuthenticateBody) (db.User, 
 
 func (s *Service) LogIn(ctx context.Context, input AuthenticateBody) (db.User, error) {
 	// TODO: If user not found, still verify a dummy hash to avoid timing attacks...
+	// Not necessary if sign up reveals authenticated user?
 	email, ok := trimAndRequireValue(input.Email)
 	if !ok {
 		return db.User{}, ErrInvalidLogInInput
@@ -146,13 +146,12 @@ func isEmpty(value string) bool {
 	return trimmed == ""
 }
 
-// TODO: Review OWASP and implement.
 func (s *Service) isValidPassword(password string) error {
 	if strings.TrimSpace(password) == "" {
 		return ErrPasswordEmpty
 	}
 
-	if utf8.RuneCountInString(password) < 12 {
+	if utf8.RuneCountInString(password) <= 12 {
 		return ErrPasswordShort
 	}
 
