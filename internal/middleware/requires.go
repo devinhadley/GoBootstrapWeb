@@ -9,7 +9,7 @@ import (
 type Requirement func(w http.ResponseWriter, r *http.Request) bool
 
 func Authenticated(w http.ResponseWriter, r *http.Request) bool {
-	if !isUserInContext(r.Context()) {
+	if !isUserInRequest(r) {
 		web.WriteJSONResponse(w, http.StatusUnauthorized, map[string]any{})
 		return false
 	}

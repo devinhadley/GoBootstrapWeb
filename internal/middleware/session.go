@@ -38,8 +38,8 @@ func withGetUser(ctx context.Context, getUser GetUserFunc) context.Context {
 	return context.WithValue(ctx, getUserContextKey, getUser)
 }
 
-func UserFromContext(ctx context.Context) (user.User, error) {
-	getUser, ok := ctx.Value(getUserContextKey).(GetUserFunc)
+func UserFromRequest(r *http.Request) (user.User, error) {
+	getUser, ok := r.Context().Value(getUserContextKey).(GetUserFunc)
 	if !ok {
 		return user.User{}, ErrUserNotInContext
 	}
@@ -47,8 +47,8 @@ func UserFromContext(ctx context.Context) (user.User, error) {
 	return getUser()
 }
 
-func isUserInContext(ctx context.Context) bool {
-	_, ok := ctx.Value(getUserContextKey).(GetUserFunc)
+func isUserInRequest(r *http.Request) bool {
+	_, ok := r.Context().Value(getUserContextKey).(GetUserFunc)
 	return ok
 }
 
