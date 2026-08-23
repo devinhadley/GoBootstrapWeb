@@ -111,7 +111,7 @@ func CreateLoginHandler(userService logInner, sessionService sessionCreator) htt
 
 func CreateGetUserHandler() http.Handler {
 	return middleware.Requires(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		usr, err := middleware.UserFromContext(r.Context())
+		usr, err := middleware.UserFromRequest(r)
 		if err != nil {
 			log.Printf("when getting user from context for get user endpoint: %v", err)
 			web.WriteAndReportInternalError(w)
@@ -133,7 +133,7 @@ func CreateAuthenticatedPasswordResetHandler(userService authenticatedPasswordRe
 				return
 			}
 
-			usr, err := middleware.UserFromContext(r.Context())
+			usr, err := middleware.UserFromRequest(r)
 			if err != nil {
 				log.Printf("when getting user for authenticated password reset: %v", err)
 				web.WriteAndReportInternalError(w)
@@ -214,7 +214,7 @@ func CreateEmailResetRequestHandler(userService emailResetRequester) http.Handle
 				return
 			}
 
-			usr, err := middleware.UserFromContext(r.Context())
+			usr, err := middleware.UserFromRequest(r)
 			if err != nil {
 				log.Printf("when getting user for email reset request: %v", err)
 				web.WriteAndReportInternalError(w)

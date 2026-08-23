@@ -64,7 +64,7 @@ func testValidSessionAuthenticatesCorrectUser(t *testing.T) {
 	}
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
-		user, err := middleware.UserFromContext(r.Context())
+		user, err := middleware.UserFromRequest(r)
 		if err != nil {
 			t.Fatalf("failed to get user from context %v", err)
 		}
@@ -117,7 +117,7 @@ func testNoSessionCookieContinuesUnauthenticated(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		handlerCalled = true
 
-		_, err := middleware.UserFromContext(r.Context())
+		_, err := middleware.UserFromRequest(r)
 		if !errors.Is(err, middleware.ErrUserNotInContext) {
 			t.Fatalf("expected error %v, got %v", middleware.ErrUserNotInContext, err)
 		}
@@ -145,7 +145,7 @@ func testMalformedSessionCookieContinuesUnauthenticated(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		handlerCalled = true
 
-		_, err := middleware.UserFromContext(r.Context())
+		_, err := middleware.UserFromRequest(r)
 		if !errors.Is(err, middleware.ErrUserNotInContext) {
 			t.Fatalf("expected error %v, got %v", middleware.ErrUserNotInContext, err)
 		}
@@ -181,7 +181,7 @@ func testSessionIDNotFoundContinuesUnauthenticated(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		handlerCalled = true
 
-		_, err := middleware.UserFromContext(r.Context())
+		_, err := middleware.UserFromRequest(r)
 		if !errors.Is(err, middleware.ErrUserNotInContext) {
 			t.Fatalf("expected error %v, got %v", middleware.ErrUserNotInContext, err)
 		}
@@ -244,7 +244,7 @@ func testValidSessionButUserInactive(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		handlerCalled = true
 
-		_, err := middleware.UserFromContext(r.Context())
+		_, err := middleware.UserFromRequest(r)
 		if !errors.Is(err, middleware.ErrUserNotInContext) {
 			t.Fatalf("expected error %v, got %v", middleware.ErrUserNotInContext, err)
 		}
@@ -307,7 +307,7 @@ func testAbsoluteExpiration(t *testing.T) {
 	makeSessionAbsolutelyExpired(t, deps, session.Session.DBSession().ID)
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
-		currentUser, err := middleware.UserFromContext(r.Context())
+		currentUser, err := middleware.UserFromRequest(r)
 		if currentUser != (user.User{}) {
 			t.Fatalf("wanted empty user but got %v", currentUser)
 		}
@@ -372,7 +372,7 @@ func testIdleExpiration(t *testing.T) {
 	makeSessionIdleExpired(t, deps, session.Session.DBSession().ID)
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
-		currentUser, err := middleware.UserFromContext(r.Context())
+		currentUser, err := middleware.UserFromRequest(r)
 		if currentUser != (user.User{}) {
 			t.Fatalf("wanted empty user but got %v", currentUser)
 		}
@@ -435,7 +435,7 @@ func testSessionRotation(t *testing.T) {
 	makeSessionNeedRefresh(t, deps, createdSession.Session.DBSession().ID)
 
 	handler := middleware.CreateSessionMiddleware(&deps.userService, &deps.sessionService, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, err := middleware.UserFromContext(r.Context())
+		user, err := middleware.UserFromRequest(r)
 		if err != nil {
 			t.Fatalf("wanted no error when getting user but got %v", err)
 		}
@@ -566,7 +566,7 @@ func testUpdateLastSeenWhenThresholdReached(t *testing.T) {
 	}
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
-		currentUser, userErr := middleware.UserFromContext(r.Context())
+		currentUser, userErr := middleware.UserFromRequest(r)
 		if userErr != nil {
 			t.Fatalf("failed to get user from context %v", userErr)
 		}

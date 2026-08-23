@@ -91,7 +91,7 @@ func testRotateSessionErrorProceedsBestEffort(t *testing.T) {
 
 	handler := CreateSessionMiddleware(userService, sessionService, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nextCalled = true
-		usr, err := UserFromContext(r.Context())
+		usr, err := UserFromRequest(r)
 		if err != nil {
 			t.Fatalf("expected authenticated user, got error %v", err)
 		}
@@ -171,7 +171,7 @@ func testExpiredSessionExpireErrorClearsCookie(t *testing.T) {
 
 	handler := CreateSessionMiddleware(userService, sessionService, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nextCalled = true
-		if _, err := UserFromContext(r.Context()); !errors.Is(err, ErrUserNotInContext) {
+		if _, err := UserFromRequest(r); !errors.Is(err, ErrUserNotInContext) {
 			t.Fatalf("expected no user in context, got %v", err)
 		}
 		w.WriteHeader(http.StatusOK)
@@ -266,7 +266,7 @@ func testUpdateLastSeenErrorStillAuthenticates(t *testing.T) {
 
 	handler := CreateSessionMiddleware(userService, sessionService, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nextCalled = true
-		usr, err := UserFromContext(r.Context())
+		usr, err := UserFromRequest(r)
 		if err != nil {
 			t.Fatalf("expected authenticated user, got error %v", err)
 		}
