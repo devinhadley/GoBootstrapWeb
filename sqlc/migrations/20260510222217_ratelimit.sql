@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TYPE auth_action AS ENUM ('login', 'password_reset', 'email_reset');
+CREATE TYPE auth_action AS ENUM ('login', 'password_reset', 'email_reset', 'reauthentication');
 CREATE TYPE auth_outcome AS ENUM ('succeeded', 'failed');
 
 CREATE TABLE auth_attempts (

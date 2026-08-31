@@ -5,9 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"devinhadley/gobootstrapweb/internal/db"
-	"devinhadley/gobootstrapweb/internal/pgerr"
-	"devinhadley/gobootstrapweb/internal/service/email"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -16,6 +13,10 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"devinhadley/gobootstrapweb/internal/db"
+	"devinhadley/gobootstrapweb/internal/pgerr"
+	"devinhadley/gobootstrapweb/internal/service/email"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -206,19 +207,14 @@ func (s *Service) LogIn(ctx context.Context, input AuthenticateBody) (User, erro
 }
 
 func (s *Service) ResetPasswordForAuthenticatedUser(ctx context.Context, usr User, input AuthenticatedPasswordResetBody) error {
-	err := s.isValidPassword(input.NewPassword)
+	err := s.verifyReauthentication(ctx, usr, input.Password)
 	if err != nil {
 		return err
 	}
 
-	// TODO: No rate-limiting here. An authenticated session could be used to brute-force.
-	ok, err := verifyPassword(input.Password, usr.DBUser().PasswordHash)
+	err = s.isValidPassword(input.NewPassword)
 	if err != nil {
 		return err
-	}
-
-	if !ok {
-		return ErrInvalidCredentials
 	}
 
 	newPasswordHash, err := createPasswordHash(input.NewPassword)
@@ -367,18 +363,9 @@ func (s *Service) CreateEmailResetRequest(ctx context.Context, usr User, input C
 		return ErrRateLimit
 	}
 
-	// TODO: rate limit internal auth attempts.
-	ok, err = verifyPassword(input.Password, usr.DBUser().PasswordHash)
+	err = s.verifyReauthentication(ctx, usr, input.Password)
 	if err != nil {
-		return fmt.Errorf("validating password hash: %w", err)
-	}
-
-	if !ok {
-		err = s.createAuthAttempt(ctx, db.AuthActionEmailReset, currentEmail, db.AuthOutcomeFailed)
-		if err != nil {
-			log.Printf("creating auth attempt for email reset request: %v", err)
-		}
-		return ErrInvalidCredentials
+		return err
 	}
 
 	if newEmail == currentEmail {
@@ -522,10 +509,18 @@ func (s *Service) isValidPassword(password string) error {
 }
 
 func (s *Service) isLoginRateLimited(ctx context.Context, email string) (bool, error) {
-	timeBefore := time.Now().Add(-(rateLimitLoginDurationMinutes * time.Minute))
+	return s.isFailedAttemptRateLimited(ctx, db.AuthActionLogin, email, rateLimitLoginDurationMinutes*time.Minute, rateLimitLoginAttemptsAllowed)
+}
 
-	loginAttemptsForEmail, err := s.queries.CountFailedAuthAttemptsSince(ctx, db.CountFailedAuthAttemptsSinceParams{
-		Action: db.AuthActionLogin,
+func (s *Service) isReauthenticationRateLimited(ctx context.Context, email string) (bool, error) {
+	return s.isFailedAttemptRateLimited(ctx, db.AuthActionReauthentication, email, rateLimitLoginDurationMinutes*time.Minute, rateLimitLoginAttemptsAllowed)
+}
+
+func (s *Service) isFailedAttemptRateLimited(ctx context.Context, action db.AuthAction, email string, window time.Duration, allowed int64) (bool, error) {
+	timeBefore := time.Now().Add(-window)
+
+	attemptsForEmail, err := s.queries.CountFailedAuthAttemptsSince(ctx, db.CountFailedAuthAttemptsSinceParams{
+		Action: action,
 		Email:  email,
 		CreatedAt: pgtype.Timestamptz{
 			Time:  timeBefore,
@@ -536,7 +531,7 @@ func (s *Service) isLoginRateLimited(ctx context.Context, email string) (bool, e
 		return false, err
 	}
 
-	return loginAttemptsForEmail >= rateLimitLoginAttemptsAllowed, nil
+	return attemptsForEmail >= allowed, nil
 }
 
 func (s *Service) isCreatePasswordResetRateLimited(ctx context.Context, email string) (bool, error) {
@@ -587,6 +582,37 @@ func (s *Service) failLoginAttempt(ctx context.Context, email string) (User, err
 		return User{}, err
 	}
 	return User{}, ErrInvalidCredentials
+}
+
+func (s *Service) verifyReauthentication(ctx context.Context, usr User, password string) error {
+	email := usr.DBUser().Email
+
+	isLimited, err := s.isReauthenticationRateLimited(ctx, email)
+	if err != nil {
+		return fmt.Errorf("checking if reauthentication rate limited: %w", err)
+	}
+
+	if isLimited {
+		return ErrRateLimit
+	}
+
+	ok, err := verifyPassword(password, usr.DBUser().PasswordHash)
+	if err != nil {
+		return err
+	}
+
+	if !ok {
+		if err := s.createAuthAttempt(ctx, db.AuthActionReauthentication, email, db.AuthOutcomeFailed); err != nil {
+			log.Printf("creating auth attempt for reauthentication: %v", err)
+		}
+		return ErrInvalidCredentials
+	}
+
+	if err := s.createAuthAttempt(ctx, db.AuthActionReauthentication, email, db.AuthOutcomeSucceeded); err != nil {
+		log.Printf("creating auth attempt for reauthentication: %v", err)
+	}
+
+	return nil
 }
 
 func normalizeAndValidateEmail(input string) (string, bool) {
