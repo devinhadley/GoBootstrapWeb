@@ -14,9 +14,10 @@ import (
 type AuthAction string
 
 const (
-	AuthActionLogin         AuthAction = "login"
-	AuthActionPasswordReset AuthAction = "password_reset"
-	AuthActionEmailReset    AuthAction = "email_reset"
+	AuthActionLogin            AuthAction = "login"
+	AuthActionPasswordReset    AuthAction = "password_reset"
+	AuthActionEmailReset       AuthAction = "email_reset"
+	AuthActionReauthentication AuthAction = "reauthentication"
 )
 
 func (e *AuthAction) Scan(src interface{}) error {

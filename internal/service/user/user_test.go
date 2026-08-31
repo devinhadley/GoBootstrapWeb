@@ -55,6 +55,8 @@ func TestPasswordReset(t *testing.T) {
 	t.Run("can reset password when authenticated", testResetPasswordForAuthenticatedUser)
 	t.Run("password reset fails with authenticated user if existing password incorrect", testResetPasswordForAuthenticatedUserWrongCurrentPassword)
 	t.Run("authenticated password reset doesn't allow weak pass", testResetPasswordForAuthenticatedUserRejectsWeakPassword)
+	t.Run("authenticated password reset is rate limited after repeated failed reauthentication", testResetPasswordForAuthenticatedUserReauthRateLimited)
+	t.Run("authenticated password reset records a failed reauthentication attempt", testResetPasswordForAuthenticatedUserRecordsFailedReauthAttempt)
 	t.Run("can request token password reset", testCanRequestPasswordReset)
 	t.Run("cant create password reset with malformed email", testCantCreatePasswordResetWithMalformedEmail)
 	t.Run("requesting token password reset response for unkown email", testRequestingTokenPasswordResetForUnknownEmail)
@@ -74,6 +76,8 @@ func TestCreateEmailResetRequest(t *testing.T) {
 	t.Run("email reset request propagates unexpected error checking new email", testCreateEmailResetRequestPropagatesUnexpectedGetUserByEmailError)
 	t.Run("cant request more than 3 email resets for a particular email in 120 minutes", testCantRequestMoreThanThreeEmailResetsIn120Minutes)
 	t.Run("cant request more than 2 email resets for a particular email in 15 minutes", testCantRequestMoreThanTwoEmailResetsIn15Minutes)
+	t.Run("email reset request is rate limited after repeated failed reauthentication", testCreateEmailResetRequestReauthRateLimited)
+	t.Run("email reset request and password reset share the reauthentication rate limit budget", testReauthenticationRateLimitSharedAcrossFlows)
 }
 
 func testUserSignUp(t *testing.T) {
@@ -739,6 +743,98 @@ func testResetPasswordForAuthenticatedUserWrongCurrentPassword(t *testing.T) {
 	}
 }
 
+func testResetPasswordForAuthenticatedUserReauthRateLimited(t *testing.T) {
+	ctx := context.Background()
+	currentPassword := "correct-current-password"
+
+	usr := UserFromDB(db.User{
+		ID:           42,
+		Email:        "current@example.com",
+		PasswordHash: hashPassword(t, currentPassword),
+	})
+
+	rateLimitChecked := false
+
+	userService := setupUserService(t, mockQueries{
+		CountFailedAuthAttemptsSinceFn: func(_ context.Context, arg db.CountFailedAuthAttemptsSinceParams) (int64, error) {
+			if arg.Action != db.AuthActionReauthentication {
+				t.Fatalf("CountFailedAuthAttemptsSince got action %q, want %q", arg.Action, db.AuthActionReauthentication)
+			}
+			if arg.Email != usr.DBUser().Email {
+				t.Fatalf("CountFailedAuthAttemptsSince got email %q, want %q", arg.Email, usr.DBUser().Email)
+			}
+			rateLimitChecked = true
+			return rateLimitLoginAttemptsAllowed, nil
+		},
+		UpdatePasswordHashFn: func(context.Context, db.UpdatePasswordHashParams) error {
+			t.Fatal("UpdatePasswordHash should not be called for rate limited reauthentication")
+			return nil
+		},
+		CreateLoginAuthAttemptFn: func(context.Context, db.CreateLoginAuthAttemptParams) error {
+			t.Fatal("CreateLoginAuthAttempt should not be called for rate limited reauthentication")
+			return nil
+		},
+	})
+
+	err := userService.ResetPasswordForAuthenticatedUser(ctx, usr, AuthenticatedPasswordResetBody{
+		Password:    currentPassword,
+		NewPassword: "brand-new-password",
+	})
+	if !errors.Is(err, ErrRateLimit) {
+		t.Fatalf("got error %v, want %v", err, ErrRateLimit)
+	}
+
+	if !rateLimitChecked {
+		t.Fatal("CountFailedAuthAttemptsSince was not called")
+	}
+}
+
+func testResetPasswordForAuthenticatedUserRecordsFailedReauthAttempt(t *testing.T) {
+	ctx := context.Background()
+	actualCurrentPassword := "correct-current-password"
+	currentEmail := "current@example.com"
+
+	usr := UserFromDB(db.User{
+		ID:           42,
+		Email:        currentEmail,
+		PasswordHash: hashPassword(t, actualCurrentPassword),
+	})
+
+	authAttemptCreated := false
+
+	userService := setupUserService(t, mockQueries{
+		UpdatePasswordHashFn: func(context.Context, db.UpdatePasswordHashParams) error {
+			t.Fatal("UpdatePasswordHash should not be called when current password is incorrect")
+			return nil
+		},
+		CreateLoginAuthAttemptFn: func(_ context.Context, arg db.CreateLoginAuthAttemptParams) error {
+			if arg.Action != db.AuthActionReauthentication {
+				t.Fatalf("CreateLoginAuthAttempt got action %q, want %q", arg.Action, db.AuthActionReauthentication)
+			}
+			if arg.Email != currentEmail {
+				t.Fatalf("CreateLoginAuthAttempt got email %q, want %q", arg.Email, currentEmail)
+			}
+			if arg.Outcome != db.AuthOutcomeFailed {
+				t.Fatalf("CreateLoginAuthAttempt got outcome %q, want %q", arg.Outcome, db.AuthOutcomeFailed)
+			}
+			authAttemptCreated = true
+			return nil
+		},
+	})
+
+	err := userService.ResetPasswordForAuthenticatedUser(ctx, usr, AuthenticatedPasswordResetBody{
+		Password:    "wrong-current-password",
+		NewPassword: "brand-new-password",
+	})
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("got error %v, want %v", err, ErrInvalidCredentials)
+	}
+
+	if !authAttemptCreated {
+		t.Fatal("CreateLoginAuthAttempt was not called")
+	}
+}
+
 func testResetPasswordForAuthenticatedUserRejectsWeakPassword(t *testing.T) {
 	ctx := context.Background()
 	currentPassword := "correct-current-password"
@@ -1208,7 +1304,8 @@ func testCanRequestEmailReset(t *testing.T) {
 	resetRequested := false
 	newEmailMailed := false
 	oldEmailNotified := false
-	authAttemptCreated := false
+	reauthAttemptCreated := false
+	emailResetAttemptCreated := false
 
 	emailResetURL := "http://example.com/email-reset"
 	userService := setupUserServiceWithEmailReset(t, mockQueries{
@@ -1233,16 +1330,20 @@ func testCanRequestEmailReset(t *testing.T) {
 			return db.EmailResetRequest{ID: arg.ID, UserID: arg.UserID, NewEmail: arg.NewEmail}, nil
 		},
 		CreateLoginAuthAttemptFn: func(_ context.Context, arg db.CreateLoginAuthAttemptParams) error {
-			if arg.Action != db.AuthActionEmailReset {
-				t.Fatalf("CreateLoginAuthAttempt got action %q, want %q", arg.Action, db.AuthActionEmailReset)
-			}
 			if arg.Email != currentEmail {
 				t.Fatalf("CreateLoginAuthAttempt got email %q, want %q", arg.Email, currentEmail)
 			}
 			if arg.Outcome != db.AuthOutcomeSucceeded {
 				t.Fatalf("CreateLoginAuthAttempt got outcome %q, want %q", arg.Outcome, db.AuthOutcomeSucceeded)
 			}
-			authAttemptCreated = true
+			switch arg.Action {
+			case db.AuthActionReauthentication:
+				reauthAttemptCreated = true
+			case db.AuthActionEmailReset:
+				emailResetAttemptCreated = true
+			default:
+				t.Fatalf("CreateLoginAuthAttempt got unexpected action %q", arg.Action)
+			}
 			return nil
 		},
 	}, email.MockEmailService{
@@ -1292,8 +1393,11 @@ func testCanRequestEmailReset(t *testing.T) {
 	if !oldEmailNotified {
 		t.Fatal("SendMail to old email was not called")
 	}
-	if !authAttemptCreated {
-		t.Fatal("CreateLoginAuthAttempt was not called")
+	if !reauthAttemptCreated {
+		t.Fatal("CreateLoginAuthAttempt was not called for reauthentication")
+	}
+	if !emailResetAttemptCreated {
+		t.Fatal("CreateLoginAuthAttempt was not called for email_reset")
 	}
 }
 
@@ -1425,8 +1529,8 @@ func testCreateEmailResetRequestFailsWithIncorrectPassword(t *testing.T) {
 			return db.EmailResetRequest{}, nil
 		},
 		CreateLoginAuthAttemptFn: func(_ context.Context, arg db.CreateLoginAuthAttemptParams) error {
-			if arg.Action != db.AuthActionEmailReset {
-				t.Fatalf("CreateLoginAuthAttempt got action %q, want %q", arg.Action, db.AuthActionEmailReset)
+			if arg.Action != db.AuthActionReauthentication {
+				t.Fatalf("CreateLoginAuthAttempt got action %q, want %q", arg.Action, db.AuthActionReauthentication)
 			}
 			if arg.Email != currentEmail {
 				t.Fatalf("CreateLoginAuthAttempt got email %q, want %q", arg.Email, currentEmail)
@@ -1454,6 +1558,119 @@ func testCreateEmailResetRequestFailsWithIncorrectPassword(t *testing.T) {
 	}
 	if !authAttemptCreated {
 		t.Fatal("CreateLoginAuthAttempt was not called")
+	}
+}
+
+func testCreateEmailResetRequestReauthRateLimited(t *testing.T) {
+	ctx := context.Background()
+	currentPassword := "correct-current-password"
+	currentEmail := "current@example.com"
+
+	usr := UserFromDB(db.User{
+		ID:           42,
+		Email:        currentEmail,
+		PasswordHash: hashPassword(t, currentPassword),
+	})
+
+	rateLimitChecked := false
+
+	userService := setupUserServiceWithEmailReset(t, mockQueries{
+		CountFailedAuthAttemptsSinceFn: func(_ context.Context, arg db.CountFailedAuthAttemptsSinceParams) (int64, error) {
+			if arg.Action != db.AuthActionReauthentication {
+				t.Fatalf("CountFailedAuthAttemptsSince got action %q, want %q", arg.Action, db.AuthActionReauthentication)
+			}
+			if arg.Email != currentEmail {
+				t.Fatalf("CountFailedAuthAttemptsSince got email %q, want %q", arg.Email, currentEmail)
+			}
+			rateLimitChecked = true
+			return rateLimitLoginAttemptsAllowed, nil
+		},
+		GetUserByEmailFn: func(context.Context, string) (db.User, error) {
+			t.Fatal("GetUserByEmail should not be called for rate limited reauthentication")
+			return db.User{}, nil
+		},
+		CreateEmailResetRequestFn: func(context.Context, db.CreateEmailResetRequestParams) (db.EmailResetRequest, error) {
+			t.Fatal("CreateEmailResetRequest should not be called for rate limited reauthentication")
+			return db.EmailResetRequest{}, nil
+		},
+		CreateLoginAuthAttemptFn: func(context.Context, db.CreateLoginAuthAttemptParams) error {
+			t.Fatal("CreateLoginAuthAttempt should not be called for rate limited reauthentication")
+			return nil
+		},
+	}, email.MockEmailService{
+		SendMailFn: func(string, string, string) error {
+			t.Fatal("SendMail should not be called for rate limited reauthentication")
+			return nil
+		},
+	}, "http://example.com/email-reset")
+
+	err := userService.CreateEmailResetRequest(ctx, usr, CreateEmailResetRequestBody{
+		Password: currentPassword,
+		NewEmail: "new@example.com",
+	})
+	if !errors.Is(err, ErrRateLimit) {
+		t.Fatalf("got error %v, want %v", err, ErrRateLimit)
+	}
+
+	if !rateLimitChecked {
+		t.Fatal("CountFailedAuthAttemptsSince was not called")
+	}
+}
+
+// testReauthenticationRateLimitSharedAcrossFlows asserts that password-change and
+// email-reset-request reauthentication both check and record against the same
+// db.AuthActionReauthentication + email budget, so an attacker cannot get a bigger
+// guessing budget by switching endpoints.
+func testReauthenticationRateLimitSharedAcrossFlows(t *testing.T) {
+	ctx := context.Background()
+	currentPassword := "correct-current-password"
+	currentEmail := "current@example.com"
+
+	usr := UserFromDB(db.User{
+		ID:           42,
+		Email:        currentEmail,
+		PasswordHash: hashPassword(t, currentPassword),
+	})
+
+	var checkedActions, checkedEmails []string
+
+	newQueries := func() mockQueries {
+		return mockQueries{
+			CountFailedAuthAttemptsSinceFn: func(_ context.Context, arg db.CountFailedAuthAttemptsSinceParams) (int64, error) {
+				checkedActions = append(checkedActions, string(arg.Action))
+				checkedEmails = append(checkedEmails, arg.Email)
+				return rateLimitLoginAttemptsAllowed, nil
+			},
+		}
+	}
+
+	passwordResetQueries := newQueries()
+	passwordResetService := setupUserService(t, passwordResetQueries)
+	err := passwordResetService.ResetPasswordForAuthenticatedUser(ctx, usr, AuthenticatedPasswordResetBody{
+		Password:    currentPassword,
+		NewPassword: "brand-new-password",
+	})
+	if !errors.Is(err, ErrRateLimit) {
+		t.Fatalf("ResetPasswordForAuthenticatedUser got error %v, want %v", err, ErrRateLimit)
+	}
+
+	emailResetQueries := newQueries()
+	emailResetService := setupUserServiceWithEmailReset(t, emailResetQueries, email.MockEmailService{}, "http://example.com/email-reset")
+	err = emailResetService.CreateEmailResetRequest(ctx, usr, CreateEmailResetRequestBody{
+		Password: currentPassword,
+		NewEmail: "new@example.com",
+	})
+	if !errors.Is(err, ErrRateLimit) {
+		t.Fatalf("CreateEmailResetRequest got error %v, want %v", err, ErrRateLimit)
+	}
+
+	for i, action := range checkedActions {
+		if action != string(db.AuthActionReauthentication) {
+			t.Fatalf("check %d: got action %q, want %q", i, action, db.AuthActionReauthentication)
+		}
+		if checkedEmails[i] != currentEmail {
+			t.Fatalf("check %d: got email %q, want %q", i, checkedEmails[i], currentEmail)
+		}
 	}
 }
 
