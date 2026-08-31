@@ -207,7 +207,7 @@ func (s *Service) LogIn(ctx context.Context, input AuthenticateBody) (User, erro
 }
 
 func (s *Service) ResetPasswordForAuthenticatedUser(ctx context.Context, usr User, input AuthenticatedPasswordResetBody) error {
-	err := s.verifyReauthentication(ctx, usr.DBUser().Email, input.Password, usr.DBUser().PasswordHash)
+	err := s.verifyReauthentication(ctx, usr, input.Password)
 	if err != nil {
 		return err
 	}
@@ -363,7 +363,7 @@ func (s *Service) CreateEmailResetRequest(ctx context.Context, usr User, input C
 		return ErrRateLimit
 	}
 
-	err = s.verifyReauthentication(ctx, currentEmail, input.Password, usr.DBUser().PasswordHash)
+	err = s.verifyReauthentication(ctx, usr, input.Password)
 	if err != nil {
 		return err
 	}
@@ -512,14 +512,10 @@ func (s *Service) isLoginRateLimited(ctx context.Context, email string) (bool, e
 	return s.isFailedAttemptRateLimited(ctx, db.AuthActionLogin, email, rateLimitLoginDurationMinutes*time.Minute, rateLimitLoginAttemptsAllowed)
 }
 
-// Reauthentication deliberately reuses the login policy so an attacker cannot get a
-// bigger guessing budget by switching endpoints.
 func (s *Service) isReauthenticationRateLimited(ctx context.Context, email string) (bool, error) {
 	return s.isFailedAttemptRateLimited(ctx, db.AuthActionReauthentication, email, rateLimitLoginDurationMinutes*time.Minute, rateLimitLoginAttemptsAllowed)
 }
 
-// isFailedAttemptRateLimited enforces a single-window, failed-only rate limit for the
-// given action.
 func (s *Service) isFailedAttemptRateLimited(ctx context.Context, action db.AuthAction, email string, window time.Duration, allowed int64) (bool, error) {
 	timeBefore := time.Now().Add(-window)
 
@@ -588,10 +584,9 @@ func (s *Service) failLoginAttempt(ctx context.Context, email string) (User, err
 	return User{}, ErrInvalidCredentials
 }
 
-// It records the outcome as a reauthentication auth attempt so the shared
-// failed-attempt rate limit applies across every call site, preventing a hijacked session
-// from being used to brute-force the account password.
-func (s *Service) verifyReauthentication(ctx context.Context, email, password, passwordHash string) error {
+func (s *Service) verifyReauthentication(ctx context.Context, usr User, password string) error {
+	email := usr.DBUser().Email
+
 	isLimited, err := s.isReauthenticationRateLimited(ctx, email)
 	if err != nil {
 		return fmt.Errorf("checking if reauthentication rate limited: %w", err)
@@ -601,7 +596,7 @@ func (s *Service) verifyReauthentication(ctx context.Context, email, password, p
 		return ErrRateLimit
 	}
 
-	ok, err := verifyPassword(password, passwordHash)
+	ok, err := verifyPassword(password, usr.DBUser().PasswordHash)
 	if err != nil {
 		return err
 	}

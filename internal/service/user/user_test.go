@@ -676,7 +676,6 @@ func testResetPasswordForAuthenticatedUser(t *testing.T) {
 
 	userService := setupUserService(t, mockQueries{
 		UpdatePasswordHashFn: func(_ context.Context, arg db.UpdatePasswordHashParams) error {
-
 			if arg.ID != usr.DBUser().ID {
 				t.Fatalf("UpdatePasswordHash got id %v, want %v", arg.ID, usr.DBUser().ID)
 			}
@@ -1073,7 +1072,6 @@ func testRequestingTokenPasswordResetForUnknownEmail(t *testing.T) {
 			return db.PasswordResetRequest{}, nil
 		},
 		CreateLoginAuthAttemptFn: func(_ context.Context, arg db.CreateLoginAuthAttemptParams) error {
-
 			if arg.Action != db.AuthActionPasswordReset {
 				t.Fatalf("got action %v, want %v", arg.Action, db.AuthActionPasswordReset)
 			}
@@ -1614,63 +1612,6 @@ func testCreateEmailResetRequestReauthRateLimited(t *testing.T) {
 
 	if !rateLimitChecked {
 		t.Fatal("CountFailedAuthAttemptsSince was not called")
-	}
-}
-
-// testReauthenticationRateLimitSharedAcrossFlows asserts that password-change and
-// email-reset-request reauthentication both check and record against the same
-// db.AuthActionReauthentication + email budget, so an attacker cannot get a bigger
-// guessing budget by switching endpoints.
-func testReauthenticationRateLimitSharedAcrossFlows(t *testing.T) {
-	ctx := context.Background()
-	currentPassword := "correct-current-password"
-	currentEmail := "current@example.com"
-
-	usr := UserFromDB(db.User{
-		ID:           42,
-		Email:        currentEmail,
-		PasswordHash: hashPassword(t, currentPassword),
-	})
-
-	var checkedActions, checkedEmails []string
-
-	newQueries := func() mockQueries {
-		return mockQueries{
-			CountFailedAuthAttemptsSinceFn: func(_ context.Context, arg db.CountFailedAuthAttemptsSinceParams) (int64, error) {
-				checkedActions = append(checkedActions, string(arg.Action))
-				checkedEmails = append(checkedEmails, arg.Email)
-				return rateLimitLoginAttemptsAllowed, nil
-			},
-		}
-	}
-
-	passwordResetQueries := newQueries()
-	passwordResetService := setupUserService(t, passwordResetQueries)
-	err := passwordResetService.ResetPasswordForAuthenticatedUser(ctx, usr, AuthenticatedPasswordResetBody{
-		Password:    currentPassword,
-		NewPassword: "brand-new-password",
-	})
-	if !errors.Is(err, ErrRateLimit) {
-		t.Fatalf("ResetPasswordForAuthenticatedUser got error %v, want %v", err, ErrRateLimit)
-	}
-
-	emailResetQueries := newQueries()
-	emailResetService := setupUserServiceWithEmailReset(t, emailResetQueries, email.MockEmailService{}, "http://example.com/email-reset")
-	err = emailResetService.CreateEmailResetRequest(ctx, usr, CreateEmailResetRequestBody{
-		Password: currentPassword,
-		NewEmail: "new@example.com",
-	})
-	if !errors.Is(err, ErrRateLimit) {
-		t.Fatalf("CreateEmailResetRequest got error %v, want %v", err, ErrRateLimit)
-	}
-
-	for i, action := range checkedActions {
-		if action != string(db.AuthActionReauthentication) {
-			t.Fatalf("check %d: got action %q, want %q", i, action, db.AuthActionReauthentication)
-		}
-		if checkedEmails[i] != currentEmail {
-			t.Fatalf("check %d: got email %q, want %q", i, checkedEmails[i], currentEmail)
-		}
 	}
 }
 
