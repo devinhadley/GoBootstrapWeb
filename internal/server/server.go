@@ -21,5 +21,8 @@ func NewMux(userService *user.Service, sessionService *session.Service) http.Han
 	mux.Handle("POST /email-reset", handlers.CreateEmailResetRequestHandler(userService))
 	mux.Handle("PUT /email-reset", handlers.CreateTokenEmailResetHandler(userService, sessionService))
 
+	// Throwaway local UI for manually exercising the auth flows. See temp_ui/README.md.
+	mux.Handle("GET /temp_ui/", http.StripPrefix("/temp_ui/", http.FileServer(http.Dir("temp_ui"))))
+
 	return middleware.CreateSessionMiddleware(userService, sessionService, mux)
 }
