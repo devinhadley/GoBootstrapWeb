@@ -841,8 +841,8 @@ func testCanRequestPasswordReset(t *testing.T) {
 			if toEmail != normalizedEmail {
 				t.Fatalf("SendMail got toEmail %q, want %q", toEmail, normalizedEmail)
 			}
-			if subject != "Password Reset" {
-				t.Fatalf("SendMail got subject %q, want %q", subject, "Password Reset")
+			if subject != "Password Reset Request" {
+				t.Fatalf("SendMail got subject %q, want %q", subject, "Password Reset Request")
 			}
 			if !strings.HasPrefix(body, prefix) {
 				t.Fatalf("SendMail got body %q, want prefix %q", body, prefix)
@@ -1253,8 +1253,8 @@ func testCanRequestEmailReset(t *testing.T) {
 			switch toEmail {
 			case normalizedNewEmail:
 				prefix := "http://example.com/email-reset/?token="
-				if subject != "Email Reset" {
-					t.Fatalf("SendMail to new email got subject %q, want %q", subject, "Email Reset")
+				if subject != "Email Reset Request" {
+					t.Fatalf("SendMail to new email got subject %q, want %q", subject, "Email Reset Request")
 				}
 				if !strings.HasPrefix(body, prefix) {
 					t.Fatalf("SendMail to new email got body %q, want prefix %q", body, prefix)
@@ -1668,7 +1668,7 @@ func setupUserServiceWithEmail(t *testing.T, mockedQueries mockQueries, mockedEm
 	runWithTx := func(ctx context.Context, fn func(q UserQueries) error) error {
 		return fn(&mockedQueries)
 	}
-	return NewService(&mockedQueries, runWithTx, mockedEmailService, Config{PasswordResetURL: passwordResetURL})
+	return NewService(&mockedQueries, NewPostgresAuthAttemptStore(&mockedQueries), runWithTx, mockedEmailService, Config{PasswordResetURL: passwordResetURL})
 }
 
 func setupUserServiceWithEmailReset(t *testing.T, mockedQueries mockQueries, mockedEmailService email.MockEmailService, emailResetURL string) *Service {
@@ -1676,7 +1676,7 @@ func setupUserServiceWithEmailReset(t *testing.T, mockedQueries mockQueries, moc
 	runWithTx := func(ctx context.Context, fn func(q UserQueries) error) error {
 		return fn(&mockedQueries)
 	}
-	return NewService(&mockedQueries, runWithTx, mockedEmailService, Config{EmailResetURL: emailResetURL})
+	return NewService(&mockedQueries, NewPostgresAuthAttemptStore(&mockedQueries), runWithTx, mockedEmailService, Config{EmailResetURL: emailResetURL})
 }
 
 type mockQueries struct {

@@ -50,9 +50,10 @@ func main() {
 	passwordResetURL := getEnvOrPanic("PASSWORD_RESET_URL")
 	emailResetURL := getEnvOrPanic("EMAIL_RESET_URL")
 	txnGenerator := user.CreateUserServiceTxnGenerator(dbConPool, queries)
+	attemptStore := user.NewPostgresAuthAttemptStore(queries)
 
 	sessionService := session.NewService(queries)
-	userService := user.NewService(queries, txnGenerator, mailService, user.Config{
+	userService := user.NewService(queries, attemptStore, txnGenerator, mailService, user.Config{
 		PasswordResetURL: passwordResetURL,
 		EmailResetURL:    emailResetURL,
 	})

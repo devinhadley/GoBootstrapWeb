@@ -733,7 +733,8 @@ func getTestDependencies(t *testing.T) sessionIntegrationTestDependencies {
 
 	queries := db.New(pool)
 	txnGenerator := user.CreateUserServiceTxnGenerator(pool, queries)
+	attemptStore := user.NewPostgresAuthAttemptStore(queries)
 	sessionService := session.NewService(queries)
 
-	return sessionIntegrationTestDependencies{queries: *queries, userService: *user.NewService(queries, txnGenerator, email.MailHogService{}, user.Config{PasswordResetURL: "http://example.com/password-reset"}), sessionService: *sessionService, pool: pool}
+	return sessionIntegrationTestDependencies{queries: *queries, userService: *user.NewService(queries, attemptStore, txnGenerator, email.MailHogService{}, user.Config{PasswordResetURL: "http://example.com/password-reset"}), sessionService: *sessionService, pool: pool}
 }

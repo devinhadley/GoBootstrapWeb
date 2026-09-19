@@ -935,8 +935,8 @@ func testCanCreatePasswordResetRequest(t *testing.T) {
 		t.Fatalf("got sent email to %q, want %q", sentEmail.ToEmail, email)
 	}
 
-	if sentEmail.Subject != "Password Reset" {
-		t.Fatalf("got sent email subject %q, want %q", sentEmail.Subject, "Password Reset")
+	if sentEmail.Subject != "Password Reset Request" {
+		t.Fatalf("got sent email subject %q, want %q", sentEmail.Subject, "Password Reset Request")
 	}
 
 	if !strings.Contains(sentEmail.Body, "?token=") {
@@ -1337,8 +1337,8 @@ func testEmailResetRequestSucceeds(t *testing.T) {
 	if newEmailMessage.ToEmail != newEmail {
 		t.Fatalf("got first email recipient %q, want %q", newEmailMessage.ToEmail, newEmail)
 	}
-	if newEmailMessage.Subject != "Email Reset" {
-		t.Fatalf("got first email subject %q, want %q", newEmailMessage.Subject, "Email Reset")
+	if newEmailMessage.Subject != "Email Reset Request" {
+		t.Fatalf("got first email subject %q, want %q", newEmailMessage.Subject, "Email Reset Request")
 	}
 	wantPrefix := "http://example.com/email-reset/?token="
 	if !strings.HasPrefix(newEmailMessage.Body, wantPrefix) {
@@ -1648,8 +1648,9 @@ func setupUserIntegrationDeps(t *testing.T) userIntegrationDeps {
 	queries := db.New(pool)
 	sliceEmailService := &email.SliceEmailService{}
 	txnGenerator := user.CreateUserServiceTxnGenerator(pool, queries)
+	attemptStore := user.NewPostgresAuthAttemptStore(queries)
 	sessionService := session.NewService(queries)
-	userService := user.NewService(queries, txnGenerator, sliceEmailService, user.Config{
+	userService := user.NewService(queries, attemptStore, txnGenerator, sliceEmailService, user.Config{
 		PasswordResetURL: "http://example.com/password-reset",
 		EmailResetURL:    "http://example.com/email-reset",
 	})
