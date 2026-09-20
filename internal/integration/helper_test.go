@@ -32,7 +32,7 @@ func getIntegrationTestPool(t testing.TB) *pgxpool.Pool {
 func cleanupIntegrationTables(t testing.TB, pool *pgxpool.Pool) {
 	t.Helper()
 
-	_, err := pool.Exec(context.Background(), "TRUNCATE TABLE sessions, users, auth_attempts, password_reset_requests, email_reset_requests RESTART IDENTITY")
+	_, err := pool.Exec(context.Background(), "TRUNCATE TABLE sessions, users, password_reset_requests, email_reset_requests RESTART IDENTITY")
 	if err != nil {
 		t.Fatalf("failed to clean integration tables: %v", err)
 	}

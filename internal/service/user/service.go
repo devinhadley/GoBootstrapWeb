@@ -33,13 +33,12 @@ var (
 	ErrPasswordLong       = errors.New("password cannot be empty")
 	ErrPasswordCommon     = errors.New("password is too common")
 	ErrUserNotFound       = errors.New("user not found")
-	ErrRateLimit          = errors.New("too many attempts for action")
 	ErrInvalidResetToken  = errors.New("invalid or expired reset token")
 )
 
 const (
-	passwordResetTokenDurationMinutes = 15
-	emailResetTokenDurationMinutes    = 15
+	passwordResetTokenDuration = 15 * time.Minute
+	emailResetTokenDuration    = 15 * time.Minute
 )
 
 const (
@@ -68,7 +67,6 @@ type UserQueries interface {
 
 type Service struct {
 	queries         UserQueries
-	authAttempts    AuthAttemptStore
 	runWithTx       RunUserQueriesInTxFn
 	commonPasswords commonPasswords
 	config          Config
@@ -103,7 +101,7 @@ type Config struct {
 	EmailResetURL    string
 }
 
-func NewService(queries UserQueries, authAttempts AuthAttemptStore, runWithTx RunUserQueriesInTxFn, emailService email.Service, config Config) *Service {
+func NewService(queries UserQueries, runWithTx RunUserQueriesInTxFn, emailService email.Service, config Config) *Service {
 	if len(config.PasswordResetURL) > 0 && !strings.HasSuffix(config.PasswordResetURL, "/") {
 		config.PasswordResetURL += "/"
 	}
@@ -113,7 +111,6 @@ func NewService(queries UserQueries, authAttempts AuthAttemptStore, runWithTx Ru
 
 	return &Service{
 		queries:         queries,
-		authAttempts:    authAttempts,
 		runWithTx:       runWithTx,
 		emailService:    emailService,
 		commonPasswords: getCommonPasswords(),
@@ -172,31 +169,16 @@ func (s *Service) LogIn(ctx context.Context, input AuthenticateBody) (User, erro
 		return User{}, ErrInvalidEmail
 	}
 
-	isLimited, err := s.isFailedAttemptRateLimited(
-		ctx,
-		db.AuthActionLogin,
-		email,
-		rateLimitLoginDurationMinutes*time.Minute,
-		rateLimitLoginAttemptsAllowed,
-	)
-	if err != nil {
-		return User{}, fmt.Errorf("checking if email ratelimited: %w", err)
-	}
-
-	if isLimited {
-		return User{}, ErrRateLimit
-	}
-
 	user, err := s.queries.GetUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return s.failLoginAttempt(ctx, email)
+			return User{}, ErrInvalidCredentials
 		}
 		return User{}, fmt.Errorf("getting user by email: %w", err)
 	}
 
 	if !user.IsActive {
-		return s.failLoginAttempt(ctx, email)
+		return User{}, ErrInvalidCredentials
 	}
 
 	ok, err = verifyPassword(input.Password, user.PasswordHash)
@@ -204,12 +186,7 @@ func (s *Service) LogIn(ctx context.Context, input AuthenticateBody) (User, erro
 		return User{}, err
 	}
 	if !ok {
-		return s.failLoginAttempt(ctx, email)
-	}
-
-	err = s.createAuthAttempt(ctx, db.AuthActionLogin, email, db.AuthOutcomeSucceeded)
-	if err != nil {
-		log.Printf("creating successful auth login attempt: %v", err)
+		return User{}, ErrInvalidCredentials
 	}
 
 	return UserFromDB(user), nil
@@ -255,22 +232,9 @@ func (s *Service) CreatePasswordResetRequest(ctx context.Context, reqBody Create
 		return ErrInvalidEmail
 	}
 
-	isRateLimited, err := s.isCreatePasswordResetRateLimited(ctx, email)
-	if err != nil {
-		return fmt.Errorf("checking if password reset request rate limited: %w", err)
-	}
-
-	if isRateLimited {
-		return ErrRateLimit
-	}
-
 	usr, err := s.queries.GetUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			err = s.createAuthAttempt(ctx, db.AuthActionPasswordReset, email, db.AuthOutcomeFailed)
-			if err != nil {
-				log.Printf("creating auth attempt for reset request: %v", err)
-			}
 			return ErrUserNotFound
 		}
 
@@ -297,11 +261,6 @@ func (s *Service) CreatePasswordResetRequest(ctx context.Context, reqBody Create
 	err = s.emailService.SendMail(email, passwordResetRequestEmailSubject, urlWithToken)
 	if err != nil {
 		return fmt.Errorf("failed to send passwor reset email: %w", err)
-	}
-
-	err = s.createAuthAttempt(ctx, db.AuthActionPasswordReset, email, db.AuthOutcomeSucceeded)
-	if err != nil {
-		log.Printf("creating auth attempt for reset request: %v", err)
 	}
 
 	return nil
@@ -331,7 +290,7 @@ func (s *Service) ResetPasswordFromResetRequest(ctx context.Context, token strin
 			return fmt.Errorf("consuming password reset request: %w", err)
 		}
 
-		expiresAt := resetRequest.CreatedAt.Time.Add(passwordResetTokenDurationMinutes * time.Minute)
+		expiresAt := resetRequest.CreatedAt.Time.Add(passwordResetTokenDuration)
 		if time.Now().After(expiresAt) {
 			// TODO: Cleanup expired tokens...
 			// Txn aborts so wont be deleted.
@@ -370,16 +329,7 @@ func (s *Service) CreateEmailResetRequest(ctx context.Context, usr User, input C
 
 	currentEmail := usr.DBUser().Email
 
-	isRateLimited, err := s.isCreateEmailResetRateLimited(ctx, currentEmail)
-	if err != nil {
-		return fmt.Errorf("checking if create email reset request rate limited: %w", err)
-	}
-
-	if isRateLimited {
-		return ErrRateLimit
-	}
-
-	err = s.verifyReauthentication(ctx, usr, input.Password)
+	err := s.verifyReauthentication(ctx, usr, input.Password)
 	if err != nil {
 		return err
 	}
@@ -428,11 +378,6 @@ func (s *Service) CreateEmailResetRequest(ctx context.Context, usr User, input C
 		log.Printf("failed to send email reset notification to old address: %v", err)
 	}
 
-	err = s.createAuthAttempt(ctx, db.AuthActionEmailReset, currentEmail, db.AuthOutcomeSucceeded)
-	if err != nil {
-		log.Printf("creating auth attempt for email reset request: %v", err)
-	}
-
 	return nil
 }
 
@@ -455,7 +400,7 @@ func (s *Service) ResetEmailFromResetRequest(ctx context.Context, token string) 
 			return fmt.Errorf("consuming email reset request: %w", err)
 		}
 
-		expiresAt := resetRequest.CreatedAt.Time.Add(emailResetTokenDurationMinutes * time.Minute)
+		expiresAt := resetRequest.CreatedAt.Time.Add(emailResetTokenDuration)
 		if time.Now().After(expiresAt) {
 			// TODO: Cleanup expired tokens...
 			// Txn aborts so wont be deleted.
@@ -529,47 +474,13 @@ func (s *Service) isValidPassword(password string) error {
 }
 
 func (s *Service) verifyReauthentication(ctx context.Context, usr User, password string) error {
-	email := usr.DBUser().Email
-
-	isLimited, err := s.isFailedAttemptRateLimited(
-		ctx,
-		db.AuthActionReauthentication,
-		email,
-		rateLimitLoginDurationMinutes*time.Minute,
-		rateLimitLoginAttemptsAllowed,
-	)
-	if err != nil {
-		return fmt.Errorf("checking if reauthentication rate limited: %w", err)
-	}
-
-	if isLimited {
-		return ErrRateLimit
-	}
-
 	ok, err := verifyPassword(password, usr.DBUser().PasswordHash)
 	if err != nil {
 		return err
 	}
 
 	if !ok {
-		if err := s.createAuthAttempt(
-			ctx,
-			db.AuthActionReauthentication,
-			email,
-			db.AuthOutcomeFailed,
-		); err != nil {
-			log.Printf("creating auth attempt for reauthentication: %v", err)
-		}
 		return ErrInvalidCredentials
-	}
-
-	if err := s.createAuthAttempt(
-		ctx,
-		db.AuthActionReauthentication,
-		email,
-		db.AuthOutcomeSucceeded,
-	); err != nil {
-		log.Printf("creating auth attempt for reauthentication: %v", err)
 	}
 
 	return nil
