@@ -5,23 +5,6 @@ import (
 	"time"
 )
 
-// fakeClock is a mutable, controllable time source for tests.
-type fakeClock struct {
-	now time.Time
-}
-
-func newFakeClock() *fakeClock {
-	return &fakeClock{now: time.Now()}
-}
-
-func (c *fakeClock) Now() time.Time {
-	return c.now
-}
-
-func (c *fakeClock) Advance(d time.Duration) {
-	c.now = c.now.Add(d)
-}
-
 func TestIsLimitedFalseBeforeThresholdReached(t *testing.T) {
 	clock := newFakeClock()
 	limiter := NewInMemoryLimiter(clock.Now)
@@ -62,10 +45,6 @@ func TestIsLimitedTrueAtThreshold(t *testing.T) {
 	}
 }
 
-// TestIsLimitedDecaysAfterWindowElapses is the coverage the InMemoryLimiter
-// previously had none of: that occurrences outside the policy's window stop
-// counting against it. Without a controllable clock this would require a
-// real sleep for the policy's duration.
 func TestIsLimitedDecaysAfterWindowElapses(t *testing.T) {
 	clock := newFakeClock()
 	limiter := NewInMemoryLimiter(clock.Now)
@@ -150,4 +129,20 @@ func TestIsLimitedKeysAreIndependent(t *testing.T) {
 	if limited {
 		t.Fatal("got key-b limited by an occurrence recorded against key-a")
 	}
+}
+
+type fakeClock struct {
+	someTime time.Time
+}
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{someTime: time.Now()}
+}
+
+func (c *fakeClock) Now() time.Time {
+	return c.someTime
+}
+
+func (c *fakeClock) Advance(d time.Duration) {
+	c.someTime = c.someTime.Add(d)
 }

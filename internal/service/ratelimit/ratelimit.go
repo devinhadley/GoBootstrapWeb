@@ -34,11 +34,10 @@ type Policy struct {
 
 type Occurrences struct {
 	mu    sync.RWMutex
-	times []time.Time
+	times []time.Time // Strictly increasing timestamps.
 }
 
-// now must be after all previous occurances...
-func (o *Occurrences) addOccurrenceAt(now time.Time) {
+func (o *Occurrences) addOccurrenceAt(now func() time.Time) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -58,11 +57,9 @@ func (o *Occurrences) addOccurrenceAt(now time.Time) {
 		o.times = retained
 	}
 
-	o.times = append(o.times, now)
+	o.times = append(o.times, now())
 }
 
-// countFrom reports how many occurrences fall within per, counting back from now.
-// Split out from InMemoryLimiter.IsLimited so tests can control the clock.
 func (o *Occurrences) countFrom(now time.Time, per time.Duration) int {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
@@ -80,10 +77,6 @@ type InMemoryLimiter struct {
 	now      func() time.Time
 }
 
-// NewInMemoryLimiter creates a limiter that measures elapsed time via now.
-// Pass time.Now in production; tests (including outside this package, e.g.
-// integration tests) can pass a fake clock to control window expiry without
-// sleeping for real.
 func NewInMemoryLimiter(now func() time.Time) *InMemoryLimiter {
 	entries, err := lru.New[string, *Occurrences](numKeys)
 	if err != nil {
@@ -96,20 +89,24 @@ func NewInMemoryLimiter(now func() time.Time) *InMemoryLimiter {
 	}
 }
 
-// AddOccurrence adds an occurrence of key now. If the number of occurrences for
-// key exceeds maxCount, it retains only the most recent retainCount and
-// discards the rest.
 func (s *InMemoryLimiter) AddOccurrence(key string) error {
-	occurrences, ok := s.lruCache.Get(key)
-	if !ok {
-		occurrences = &Occurrences{
-			times: make([]time.Time, 0, maxCount),
-		}
+	// A bit odd we allocate no matter what. But, I don't have to have to handle a mutex here
+	// just to prevent race conditon when adding if not present.
+	// I.e. if two threads read empty then both write new, one gets overwritten.
+	// https://github.com/hashicorp/golang-lru/issues/239
+	newOccurrences := &Occurrences{
+		times: make([]time.Time, 0, 1),
 	}
 
-	occurrences.addOccurrenceAt(s.now())
+	// To add new occurances, it must not be in the LRU.
+	existing, ok, _ := s.lruCache.PeekOrAdd(key, newOccurrences)
 
-	s.lruCache.Add(key, occurrences)
+	occurrences := newOccurrences
+	if ok {
+		occurrences = existing
+	}
+
+	occurrences.addOccurrenceAt(s.now)
 
 	return nil
 }

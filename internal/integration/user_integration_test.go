@@ -120,205 +120,6 @@ func TestEmailResetIntegration(t *testing.T) {
 	t.Run("email reset confirm fails with invalid token", testEmailResetConfirmFailsWithInvalidToken)
 }
 
-func TestRateLimitIntegration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration tests in short mode")
-	}
-
-	t.Run("login is rate limited by email after 10 attempts in 15 minutes", testLogInRateLimitedByEmail)
-	t.Run("authenticated password reset is rate limited by user after 5 attempts in an hour", testAuthenticatedPasswordResetRateLimitedByUser)
-	t.Run("password reset request is rate limited by email after 3 attempts in an hour", testPasswordResetRequestRateLimitedByEmail)
-	t.Run("email reset request is rate limited by user after 3 attempts in an hour", testEmailResetRequestRateLimitedByUser)
-	t.Run("password reset request rate limit key is case insensitive", testPasswordResetRequestRateLimitIsCaseInsensitive)
-}
-
-func testLogInRateLimitedByEmail(t *testing.T) {
-	deps := setupUserIntegrationDeps(t)
-	ctx := context.Background()
-
-	email := "rate-limit-login@example.com"
-	correctPassword := "correct-password-12345"
-
-	if _, err := deps.userService.SignUp(ctx, user.AuthenticateBody{
-		Email:    email,
-		Password: correctPassword,
-	}); err != nil {
-		t.Fatalf("failed to seed user: %v", err)
-	}
-
-	for range 10 {
-		rec := performJsonRequest(deps.handler, http.MethodPost, "/user/login", map[string]string{
-			"email":    email,
-			"password": "wrong-password",
-		})
-		assertStatus(t, rec, http.StatusUnauthorized)
-	}
-
-	rec := performJsonRequest(deps.handler, http.MethodPost, "/user/login", map[string]string{
-		"email":    email,
-		"password": "wrong-password",
-	})
-	assertStatus(t, rec, http.StatusTooManyRequests)
-
-	rec = performJsonRequest(deps.handler, http.MethodPost, "/user/login", map[string]string{
-		"email":    email,
-		"password": correctPassword,
-	})
-	assertStatus(t, rec, http.StatusTooManyRequests)
-
-	// logInLimit's window is 15 minutes: once it elapses, the same email can
-	// log in again.
-	deps.clock.Advance(15*time.Minute + time.Second)
-
-	rec = performJsonRequest(deps.handler, http.MethodPost, "/user/login", map[string]string{
-		"email":    email,
-		"password": correctPassword,
-	})
-	assertStatus(t, rec, http.StatusNoContent)
-}
-
-func testAuthenticatedPasswordResetRateLimitedByUser(t *testing.T) {
-	deps := setupUserIntegrationDeps(t)
-
-	email := "rate-limit-password-reset@example.com"
-	currentPassword := "current-password-12345"
-	incorrectPassword := "incorrect-password-12345"
-
-	_, sessionCookie := signUpWithSessions(t, deps, email, currentPassword, 1)
-
-	for range 5 {
-		rec := performJsonRequest(deps.handler, http.MethodPut, "/user/password", map[string]string{
-			"password":    incorrectPassword,
-			"newPassword": "new-password-12345",
-		}, sessionCookie)
-		assertStatus(t, rec, http.StatusUnauthorized)
-	}
-
-	rec := performJsonRequest(deps.handler, http.MethodPut, "/user/password", map[string]string{
-		"password":    incorrectPassword,
-		"newPassword": "new-password-12345",
-	}, sessionCookie)
-	assertStatus(t, rec, http.StatusTooManyRequests)
-
-	// authedPasswordResetLimit's window is 1 hour: once it elapses, the same
-	// user can attempt a password reset again.
-	deps.clock.Advance(1*time.Hour + time.Second)
-
-	rec = performJsonRequest(deps.handler, http.MethodPut, "/user/password", map[string]string{
-		"password":    currentPassword,
-		"newPassword": "new-password-12345",
-	}, sessionCookie)
-	assertStatus(t, rec, http.StatusNoContent)
-}
-
-func testPasswordResetRequestRateLimitedByEmail(t *testing.T) {
-	deps := setupUserIntegrationDeps(t)
-	ctx := context.Background()
-
-	email := "rate-limit-password-reset-request@example.com"
-
-	if _, err := deps.userService.SignUp(ctx, user.AuthenticateBody{
-		Email:    email,
-		Password: "original-password-12345",
-	}); err != nil {
-		t.Fatalf("failed to seed user: %v", err)
-	}
-
-	for range 3 {
-		rec := performJsonRequest(deps.handler, http.MethodPost, "/password-reset", map[string]string{
-			"email": email,
-		})
-		assertStatus(t, rec, http.StatusNoContent)
-	}
-
-	rec := performJsonRequest(deps.handler, http.MethodPost, "/password-reset", map[string]string{
-		"email": email,
-	})
-	assertStatus(t, rec, http.StatusTooManyRequests)
-
-	// passwordResetRequestLimit's window is 1 hour: once it elapses, the
-	// same email can request a reset again.
-	deps.clock.Advance(1*time.Hour + time.Second)
-
-	rec = performJsonRequest(deps.handler, http.MethodPost, "/password-reset", map[string]string{
-		"email": email,
-	})
-	assertStatus(t, rec, http.StatusNoContent)
-}
-
-func testEmailResetRequestRateLimitedByUser(t *testing.T) {
-	deps := setupUserIntegrationDeps(t)
-
-	currentEmail := "rate-limit-email-reset@example.com"
-	currentPassword := "current-password-12345"
-	incorrectPassword := "incorrect-password-12345"
-
-	_, sessionCookie := signUpWithSessions(t, deps, currentEmail, currentPassword, 1)
-
-	for range 3 {
-		rec := performJsonRequest(deps.handler, http.MethodPost, "/email-reset", map[string]string{
-			"password": incorrectPassword,
-			"newEmail": "rate-limit-email-reset-new@example.com",
-		}, sessionCookie)
-		assertStatus(t, rec, http.StatusUnauthorized)
-	}
-
-	rec := performJsonRequest(deps.handler, http.MethodPost, "/email-reset", map[string]string{
-		"password": incorrectPassword,
-		"newEmail": "rate-limit-email-reset-new@example.com",
-	}, sessionCookie)
-	assertStatus(t, rec, http.StatusTooManyRequests)
-
-	// emailResetRequestLimit's window is 1 hour: once it elapses, the same
-	// user can request an email reset again.
-	deps.clock.Advance(1*time.Hour + time.Second)
-
-	rec = performJsonRequest(deps.handler, http.MethodPost, "/email-reset", map[string]string{
-		"password": currentPassword,
-		"newEmail": "rate-limit-email-reset-new@example.com",
-	}, sessionCookie)
-	assertStatus(t, rec, http.StatusNoContent)
-}
-
-func testPasswordResetRequestRateLimitIsCaseInsensitive(t *testing.T) {
-	deps := setupUserIntegrationDeps(t)
-	ctx := context.Background()
-
-	email := "rate-limit-casing@example.com"
-
-	if _, err := deps.userService.SignUp(ctx, user.AuthenticateBody{
-		Email:    email,
-		Password: "original-password-12345",
-	}); err != nil {
-		t.Fatalf("failed to seed user: %v", err)
-	}
-
-	for range 3 {
-		rec := performJsonRequest(deps.handler, http.MethodPost, "/password-reset", map[string]string{
-			"email": "Rate-Limit-Casing@Example.com",
-		})
-		assertStatus(t, rec, http.StatusNoContent)
-	}
-
-	rec := performJsonRequest(deps.handler, http.MethodPost, "/password-reset", map[string]string{
-		"email": strings.ToLower("Rate-Limit-Casing@Example.com"),
-	})
-	assertStatus(t, rec, http.StatusTooManyRequests)
-
-	otherEmail := "rate-limit-casing-other@example.com"
-	if _, err := deps.userService.SignUp(ctx, user.AuthenticateBody{
-		Email:    otherEmail,
-		Password: "original-password-12345",
-	}); err != nil {
-		t.Fatalf("failed to seed second user: %v", err)
-	}
-
-	rec = performJsonRequest(deps.handler, http.MethodPost, "/password-reset", map[string]string{
-		"email": otherEmail,
-	})
-	assertStatus(t, rec, http.StatusNoContent)
-}
-
 func testSignUpSucceedsAndPersistsUser(t *testing.T) {
 	deps := setupUserIntegrationDeps(t)
 
@@ -1301,6 +1102,205 @@ func testEmailResetConfirmFailsWithInvalidToken(t *testing.T) {
 	if storedUser.ID != createdUser.DBUser().ID {
 		t.Fatalf("got user id %v, want %v", storedUser.ID, createdUser.DBUser().ID)
 	}
+}
+
+func TestRateLimitIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration tests in short mode")
+	}
+
+	t.Run("login is rate limited by email after 10 attempts in 15 minutes", testLogInRateLimitedByEmail)
+	t.Run("authenticated password reset is rate limited by user after 5 attempts in an hour", testAuthenticatedPasswordResetRateLimitedByUser)
+	t.Run("password reset request is rate limited by email after 3 attempts in an hour", testPasswordResetRequestRateLimitedByEmail)
+	t.Run("email reset request is rate limited by user after 3 attempts in an hour", testEmailResetRequestRateLimitedByUser)
+	t.Run("password reset request rate limit key is case insensitive", testPasswordResetRequestRateLimitIsCaseInsensitive)
+}
+
+func testLogInRateLimitedByEmail(t *testing.T) {
+	deps := setupUserIntegrationDeps(t)
+	ctx := context.Background()
+
+	email := "rate-limit-login@example.com"
+	correctPassword := "correct-password-12345"
+
+	if _, err := deps.userService.SignUp(ctx, user.AuthenticateBody{
+		Email:    email,
+		Password: correctPassword,
+	}); err != nil {
+		t.Fatalf("failed to seed user: %v", err)
+	}
+
+	for range 10 {
+		rec := performJsonRequest(deps.handler, http.MethodPost, "/user/login", map[string]string{
+			"email":    email,
+			"password": "wrong-password",
+		})
+		assertStatus(t, rec, http.StatusUnauthorized)
+	}
+
+	rec := performJsonRequest(deps.handler, http.MethodPost, "/user/login", map[string]string{
+		"email":    email,
+		"password": "wrong-password",
+	})
+	assertStatus(t, rec, http.StatusTooManyRequests)
+
+	rec = performJsonRequest(deps.handler, http.MethodPost, "/user/login", map[string]string{
+		"email":    email,
+		"password": correctPassword,
+	})
+	assertStatus(t, rec, http.StatusTooManyRequests)
+
+	// logInLimit's window is 15 minutes: once it elapses, the same email can
+	// log in again.
+	deps.clock.Advance(15*time.Minute + time.Second)
+
+	rec = performJsonRequest(deps.handler, http.MethodPost, "/user/login", map[string]string{
+		"email":    email,
+		"password": correctPassword,
+	})
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func testAuthenticatedPasswordResetRateLimitedByUser(t *testing.T) {
+	deps := setupUserIntegrationDeps(t)
+
+	email := "rate-limit-password-reset@example.com"
+	currentPassword := "current-password-12345"
+	incorrectPassword := "incorrect-password-12345"
+
+	_, sessionCookie := signUpWithSessions(t, deps, email, currentPassword, 1)
+
+	for range 5 {
+		rec := performJsonRequest(deps.handler, http.MethodPut, "/user/password", map[string]string{
+			"password":    incorrectPassword,
+			"newPassword": "new-password-12345",
+		}, sessionCookie)
+		assertStatus(t, rec, http.StatusUnauthorized)
+	}
+
+	rec := performJsonRequest(deps.handler, http.MethodPut, "/user/password", map[string]string{
+		"password":    incorrectPassword,
+		"newPassword": "new-password-12345",
+	}, sessionCookie)
+	assertStatus(t, rec, http.StatusTooManyRequests)
+
+	// authedPasswordResetLimit's window is 1 hour: once it elapses, the same
+	// user can attempt a password reset again.
+	deps.clock.Advance(1*time.Hour + time.Second)
+
+	rec = performJsonRequest(deps.handler, http.MethodPut, "/user/password", map[string]string{
+		"password":    currentPassword,
+		"newPassword": "new-password-12345",
+	}, sessionCookie)
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func testPasswordResetRequestRateLimitedByEmail(t *testing.T) {
+	deps := setupUserIntegrationDeps(t)
+	ctx := context.Background()
+
+	email := "rate-limit-password-reset-request@example.com"
+
+	if _, err := deps.userService.SignUp(ctx, user.AuthenticateBody{
+		Email:    email,
+		Password: "original-password-12345",
+	}); err != nil {
+		t.Fatalf("failed to seed user: %v", err)
+	}
+
+	for range 3 {
+		rec := performJsonRequest(deps.handler, http.MethodPost, "/password-reset", map[string]string{
+			"email": email,
+		})
+		assertStatus(t, rec, http.StatusNoContent)
+	}
+
+	rec := performJsonRequest(deps.handler, http.MethodPost, "/password-reset", map[string]string{
+		"email": email,
+	})
+	assertStatus(t, rec, http.StatusTooManyRequests)
+
+	// passwordResetRequestLimit's window is 1 hour: once it elapses, the
+	// same email can request a reset again.
+	deps.clock.Advance(1*time.Hour + time.Second)
+
+	rec = performJsonRequest(deps.handler, http.MethodPost, "/password-reset", map[string]string{
+		"email": email,
+	})
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func testEmailResetRequestRateLimitedByUser(t *testing.T) {
+	deps := setupUserIntegrationDeps(t)
+
+	currentEmail := "rate-limit-email-reset@example.com"
+	currentPassword := "current-password-12345"
+	incorrectPassword := "incorrect-password-12345"
+
+	_, sessionCookie := signUpWithSessions(t, deps, currentEmail, currentPassword, 1)
+
+	for range 3 {
+		rec := performJsonRequest(deps.handler, http.MethodPost, "/email-reset", map[string]string{
+			"password": incorrectPassword,
+			"newEmail": "rate-limit-email-reset-new@example.com",
+		}, sessionCookie)
+		assertStatus(t, rec, http.StatusUnauthorized)
+	}
+
+	rec := performJsonRequest(deps.handler, http.MethodPost, "/email-reset", map[string]string{
+		"password": incorrectPassword,
+		"newEmail": "rate-limit-email-reset-new@example.com",
+	}, sessionCookie)
+	assertStatus(t, rec, http.StatusTooManyRequests)
+
+	// emailResetRequestLimit's window is 1 hour: once it elapses, the same
+	// user can request an email reset again.
+	deps.clock.Advance(1*time.Hour + time.Second)
+
+	rec = performJsonRequest(deps.handler, http.MethodPost, "/email-reset", map[string]string{
+		"password": currentPassword,
+		"newEmail": "rate-limit-email-reset-new@example.com",
+	}, sessionCookie)
+	assertStatus(t, rec, http.StatusNoContent)
+}
+
+func testPasswordResetRequestRateLimitIsCaseInsensitive(t *testing.T) {
+	deps := setupUserIntegrationDeps(t)
+	ctx := context.Background()
+
+	email := "rate-limit-casing@example.com"
+
+	if _, err := deps.userService.SignUp(ctx, user.AuthenticateBody{
+		Email:    email,
+		Password: "original-password-12345",
+	}); err != nil {
+		t.Fatalf("failed to seed user: %v", err)
+	}
+
+	for range 3 {
+		rec := performJsonRequest(deps.handler, http.MethodPost, "/password-reset", map[string]string{
+			"email": "Rate-Limit-Casing@Example.com",
+		})
+		assertStatus(t, rec, http.StatusNoContent)
+	}
+
+	rec := performJsonRequest(deps.handler, http.MethodPost, "/password-reset", map[string]string{
+		"email": strings.ToLower("Rate-Limit-Casing@Example.com"),
+	})
+	assertStatus(t, rec, http.StatusTooManyRequests)
+
+	otherEmail := "rate-limit-casing-other@example.com"
+	if _, err := deps.userService.SignUp(ctx, user.AuthenticateBody{
+		Email:    otherEmail,
+		Password: "original-password-12345",
+	}); err != nil {
+		t.Fatalf("failed to seed second user: %v", err)
+	}
+
+	rec = performJsonRequest(deps.handler, http.MethodPost, "/password-reset", map[string]string{
+		"email": otherEmail,
+	})
+	assertStatus(t, rec, http.StatusNoContent)
 }
 
 func setupUserIntegrationDeps(t *testing.T) userIntegrationDeps {
