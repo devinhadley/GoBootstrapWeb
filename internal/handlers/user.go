@@ -19,6 +19,10 @@ type sessionDeactivator interface {
 	DeactivateAllSessionsForUser(ctx context.Context, userID int64) error
 }
 
+type sessionExpirer interface {
+	ExpireSession(ctx context.Context, sessionID []byte) error
+}
+
 type signUpper interface {
 	SignUp(ctx context.Context, input user.AuthenticateBody) (user.User, error)
 }
@@ -109,6 +113,16 @@ func CreateLoginHandler(userService logInner, sessionService sessionCreator, lim
 		}
 		web.AddSessionToCookie(w, newSession.RawID, newSession.Session.GetAbsoluteExpiration())
 
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+func CreateLogoutHandler(service sessionExpirer) http.Handler {
+	return middleware.WithUser(func(w http.ResponseWriter, r *http.Request, usr user.User, sess session.Session) {
+		if err := service.ExpireSession(r.Context(), sess.DBSession().ID); err != nil {
+			log.Printf("Error when expiring session: %v", err)
+		}
+		web.ClearSessionCookie(w)
 		w.WriteHeader(http.StatusNoContent)
 	})
 }

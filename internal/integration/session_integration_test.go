@@ -259,7 +259,7 @@ func testValidSessionButUserInactive(t *testing.T) {
 		t.Fatal("expected middleware to clear session cookie")
 	}
 
-	assertSessionActiveState(t, deps, createdSession.Session.DBSession().ID, true)
+	assertSessionActiveState(t, deps.pool, createdSession.Session.DBSession().ID, true)
 }
 
 func testAbsoluteExpiration(t *testing.T) {
@@ -306,7 +306,7 @@ func testAbsoluteExpiration(t *testing.T) {
 		t.Fatal("expected inner handler not to be called for an unauthenticated request")
 	}
 
-	assertSessionActiveState(t, deps, createdSession.Session.DBSession().ID, false)
+	assertSessionActiveState(t, deps.pool, createdSession.Session.DBSession().ID, false)
 
 	foundClearedCookie := false
 	for _, cookie := range rec.Result().Cookies() {
@@ -370,7 +370,7 @@ func testIdleExpiration(t *testing.T) {
 		t.Fatal("expected inner handler not to be called for an unauthenticated request")
 	}
 
-	assertSessionActiveState(t, deps, createdSession.Session.DBSession().ID, false)
+	assertSessionActiveState(t, deps.pool, createdSession.Session.DBSession().ID, false)
 
 	foundClearedCookie := false
 	for _, cookie := range rec.Result().Cookies() {
@@ -493,7 +493,7 @@ func testCreateSessionDeactivatesOnlyLeastRecentlyUsedSessionWhenLimitExceeded(t
 		t.Fatalf("failed to create eleventh session %v", err)
 	}
 
-	assertSessionActiveState(t, deps, sessions[0].Session.DBSession().ID, false)
+	assertSessionActiveState(t, deps.pool, sessions[0].Session.DBSession().ID, false)
 
 	_, err = deps.sessionService.GetSession(ctx, sessions[0].RawID)
 	if !errors.Is(err, session.ErrSessionNotFound) {
@@ -501,10 +501,10 @@ func testCreateSessionDeactivatesOnlyLeastRecentlyUsedSessionWhenLimitExceeded(t
 	}
 
 	for i := 1; i < len(sessions); i++ {
-		assertSessionActiveState(t, deps, sessions[i].Session.DBSession().ID, true)
+		assertSessionActiveState(t, deps.pool, sessions[i].Session.DBSession().ID, true)
 	}
 
-	assertSessionActiveState(t, deps, eleventhSession.Session.DBSession().ID, true)
+	assertSessionActiveState(t, deps.pool, eleventhSession.Session.DBSession().ID, true)
 }
 
 func testUpdateLastSeenWhenThresholdReached(t *testing.T) {
@@ -657,7 +657,7 @@ func makeSessionLastSeenEarlier(t *testing.T, deps sessionIntegrationTestDepende
 	}
 }
 
-func assertSessionActiveState(t *testing.T, deps sessionIntegrationTestDependencies, sessionId []byte, expectedIsActive bool) {
+func assertSessionActiveState(t *testing.T, pool *pgxpool.Pool, sessionId []byte, expectedIsActive bool) {
 	t.Helper()
 
 	query := `
@@ -665,7 +665,7 @@ func assertSessionActiveState(t *testing.T, deps sessionIntegrationTestDependenc
 	FROM sessions
 	WHERE id = $1;
 	`
-	row := deps.pool.QueryRow(context.Background(), query, sessionId)
+	row := pool.QueryRow(context.Background(), query, sessionId)
 
 	var isActive bool
 	err := row.Scan(&isActive)

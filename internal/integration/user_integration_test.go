@@ -79,6 +79,14 @@ func TestLogInIntegration(t *testing.T) {
 	t.Run("test rejects invalid email", testLogInRejectsInvalidEmail)
 }
 
+func TestLogoutIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration tests in short mode")
+	}
+
+	t.Run("logout succeeds, clears cookie, and deactivates only the requesting session", testLogoutSucceeds)
+}
+
 func TestGetUserIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration tests in short mode")
@@ -436,6 +444,49 @@ func testGetUserSucceedsWithAuthenticatedUser(t *testing.T) {
 
 	if got.Email != createdUser.DBUser().Email {
 		t.Fatalf("got email %q, want %q", got.Email, createdUser.DBUser().Email)
+	}
+}
+
+func testLogoutSucceeds(t *testing.T) {
+	deps := setupUserIntegrationDeps(t)
+	ctx := context.Background()
+
+	createdUser, sessionCookie := signUpWithSessions(t, deps, "logout@example.com", "example-password-12345", 3)
+
+	rawID, err := base64.StdEncoding.DecodeString(sessionCookie.Value)
+	if err != nil {
+		t.Fatalf("failed to decode session cookie value: %v", err)
+	}
+	sum := sha256.Sum256(rawID)
+
+	rec := performJsonRequest(deps.handler, http.MethodPost, "/user/logout", map[string]any{}, sessionCookie)
+	assertStatus(t, rec, http.StatusNoContent)
+
+	foundClearedCookie := false
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "id" {
+			foundClearedCookie = true
+			if cookie.Value != "" {
+				t.Fatalf("expected cleared session cookie value, got %q", cookie.Value)
+			}
+			if cookie.MaxAge != -1 {
+				t.Fatalf("expected cleared session cookie max age -1, got %d", cookie.MaxAge)
+			}
+		}
+	}
+
+	if !foundClearedCookie {
+		t.Fatal("expected handler to clear session cookie")
+	}
+
+	assertSessionActiveState(t, deps.pool, sum[:], false)
+
+	activeCountAfter, err := deps.queries.GetSessionCountByUser(ctx, createdUser.DBUser().ID)
+	if err != nil {
+		t.Fatalf("failed to get active session count after logout: %v", err)
+	}
+	if activeCountAfter != 2 {
+		t.Fatalf("got %d active sessions after logout, want 2", activeCountAfter)
 	}
 }
 
@@ -1150,8 +1201,8 @@ func testLogInRateLimitedByEmail(t *testing.T) {
 	})
 	assertStatus(t, rec, http.StatusTooManyRequests)
 
-	// logInLimit's window is 15 minutes: once it elapses, the same email can
-	// log in again.
+	// logInLimit's burst refills fully within 15 minutes: once that much
+	// time has passed, the same email can log in again.
 	deps.clock.Advance(15*time.Minute + time.Second)
 
 	rec = performJsonRequest(deps.handler, http.MethodPost, "/user/login", map[string]string{
@@ -1184,8 +1235,9 @@ func testAuthenticatedPasswordResetRateLimitedByUser(t *testing.T) {
 	}, sessionCookie)
 	assertStatus(t, rec, http.StatusTooManyRequests)
 
-	// authedPasswordResetLimit's window is 1 hour: once it elapses, the same
-	// user can attempt a password reset again.
+	// authedPasswordResetLimit's burst refills fully within 1 hour: once
+	// that much time has passed, the same user can attempt a password
+	// reset again.
 	deps.clock.Advance(1*time.Hour + time.Second)
 
 	rec = performJsonRequest(deps.handler, http.MethodPut, "/user/password", map[string]string{
@@ -1220,8 +1272,8 @@ func testPasswordResetRequestRateLimitedByEmail(t *testing.T) {
 	})
 	assertStatus(t, rec, http.StatusTooManyRequests)
 
-	// passwordResetRequestLimit's window is 1 hour: once it elapses, the
-	// same email can request a reset again.
+	// passwordResetRequestLimit's burst refills fully within 1 hour: once
+	// that much time has passed, the same email can request a reset again.
 	deps.clock.Advance(1*time.Hour + time.Second)
 
 	rec = performJsonRequest(deps.handler, http.MethodPost, "/password-reset", map[string]string{
@@ -1253,8 +1305,8 @@ func testEmailResetRequestRateLimitedByUser(t *testing.T) {
 	}, sessionCookie)
 	assertStatus(t, rec, http.StatusTooManyRequests)
 
-	// emailResetRequestLimit's window is 1 hour: once it elapses, the same
-	// user can request an email reset again.
+	// emailResetRequestLimit's burst refills fully within 1 hour: once that
+	// much time has passed, the same user can request an email reset again.
 	deps.clock.Advance(1*time.Hour + time.Second)
 
 	rec = performJsonRequest(deps.handler, http.MethodPost, "/email-reset", map[string]string{
@@ -1367,9 +1419,6 @@ func assertPasswordMatchesHash(t *testing.T, password string, hash string) {
 	}
 }
 
-// signUpWithSessions signs up a user, creates sessionCount active sessions for
-// them, and returns the created user along with a session cookie for the most
-// recently created session.
 func signUpWithSessions(t *testing.T, deps userIntegrationDeps, emailAddr string, password string, sessionCount int) (user.User, *http.Cookie) {
 	t.Helper()
 	ctx := context.Background()

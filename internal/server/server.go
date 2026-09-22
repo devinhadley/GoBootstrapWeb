@@ -16,6 +16,7 @@ func NewMux(userService *user.Service, sessionService *session.Service, limiter 
 	mux.Handle("GET /user", handlers.CreateGetUserHandler())
 	mux.Handle("POST /user/signup", handlers.CreateSignUpHandler(userService, sessionService))
 	mux.Handle("POST /user/login", handlers.CreateLoginHandler(userService, sessionService, limiter))
+	mux.Handle("POST /user/logout", handlers.CreateLogoutHandler(sessionService))
 	mux.Handle("PUT /user/password", handlers.CreateAuthenticatedPasswordResetHandler(userService, sessionService, limiter))
 	mux.Handle("POST /password-reset", handlers.CreatePasswordResetRequestHandler(userService, limiter))
 	mux.Handle("PUT /password-reset", handlers.CreateTokenPasswordResetHandler(userService, sessionService))

@@ -97,6 +97,8 @@ func (s *Service) GetSession(ctx context.Context, sessionID []byte) (Session, er
 	return SessionFromDB(session), nil
 }
 
+// ExpireSession expects sessionID to already be the stored hash (e.g. DBSession().ID),
+// not the raw session ID from the cookie — unlike GetSession, which hashes internally.
 func (s *Service) ExpireSession(ctx context.Context, sessionID []byte) error {
 	err := s.queries.DeactivateSession(ctx, sessionID)
 	if err != nil {
