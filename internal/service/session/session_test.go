@@ -161,7 +161,7 @@ func testGetSessionReturnsError(t *testing.T) {
 	wantErr := errors.New("failed to get session")
 
 	sessionService := NewService(&mockQueries{
-		GetActiveSessionFn: func(callCtx context.Context, id []byte) (db.Session, error) {
+		GetSessionFn: func(callCtx context.Context, id []byte) (db.Session, error) {
 			return db.Session{}, wantErr
 		},
 	})
@@ -194,7 +194,7 @@ type mockQueries struct {
 	DeleteLeastRecentlyUsedSessionForUserFn func(ctx context.Context, userID int64) error
 	DeleteAllSessionsForUserFn              func(ctx context.Context, userID int64) error
 	DeleteSessionFn                         func(ctx context.Context, id []byte) error
-	GetActiveSessionFn                      func(ctx context.Context, id []byte) (db.Session, error)
+	GetSessionFn                            func(ctx context.Context, id []byte) (db.Session, error)
 	GetSessionCountByUserFn                 func(ctx context.Context, userID int64) (int64, error)
 	UpdateSessionIDAndRefreshedAtFn         func(ctx context.Context, arg db.UpdateSessionIDAndRefreshedAtParams) (db.Session, error)
 	UpdateSessionLastSeenToNowFn            func(ctx context.Context, id []byte) (db.Session, error)
@@ -232,9 +232,9 @@ func (q *mockQueries) DeleteAllSessionsForUser(ctx context.Context, userID int64
 	return nil
 }
 
-func (q *mockQueries) GetActiveSession(ctx context.Context, id []byte) (db.Session, error) {
-	if q.GetActiveSessionFn != nil {
-		return q.GetActiveSessionFn(ctx, id)
+func (q *mockQueries) GetSession(ctx context.Context, id []byte) (db.Session, error) {
+	if q.GetSessionFn != nil {
+		return q.GetSessionFn(ctx, id)
 	}
 
 	return db.Session{}, pgx.ErrNoRows

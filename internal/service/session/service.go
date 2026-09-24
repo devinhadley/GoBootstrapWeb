@@ -16,7 +16,7 @@ import (
 type SessionQueries interface {
 	CreateSession(ctx context.Context, arg db.CreateSessionParams) (db.Session, error)
 	DeleteLeastRecentlyUsedSessionForUser(ctx context.Context, userID int64) error
-	GetActiveSession(ctx context.Context, id []byte) (db.Session, error)
+	GetSession(ctx context.Context, id []byte) (db.Session, error)
 	GetSessionCountByUser(ctx context.Context, userID int64) (int64, error)
 	UpdateSessionIDAndRefreshedAt(ctx context.Context, arg db.UpdateSessionIDAndRefreshedAtParams) (db.Session, error)
 	UpdateSessionLastSeenToNow(ctx context.Context, id []byte) (db.Session, error)
@@ -86,7 +86,7 @@ func (s *Service) GetSession(ctx context.Context, sessionID []byte) (Session, er
 	sum := sha256.Sum256(sessionID)
 	idHash := sum[:]
 
-	session, err := s.queries.GetActiveSession(ctx, idHash)
+	session, err := s.queries.GetSession(ctx, idHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Session{}, ErrSessionNotFound

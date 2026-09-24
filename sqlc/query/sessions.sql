@@ -8,7 +8,7 @@ INSERT INTO sessions (
 )
 RETURNING *;
 
--- name: GetActiveSession :one
+-- name: GetSession :one
 SELECT s.*
 FROM sessions s
 JOIN users u on s.user_id = u.id 

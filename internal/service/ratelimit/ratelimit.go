@@ -44,14 +44,12 @@ func NewInMemoryLimiter(now func() time.Time) *InMemoryLimiter {
 	warnEvict := createThrottle(evictionWarnInterval, now)
 
 	onEvict := func(key string, limiter *rate.Limiter) {
-		// A full bucket had already refilled, so the key would get an
-		// identical one next request. Only a partially drained bucket
-		// means the eviction actually handed back allowance.
 		tokens := limiter.TokensAt(now())
 		if tokens == float64(limiter.Burst()) {
 			return
 		}
 
+		// Rate limits exist to track spent tokens. If we're losing this insight, we need to right size the store...
 		warnEvict(func() {
 			log.Printf("ratelimit: WARNING evicted %q with %.1f/%d tokens left; LRU of %d keys may be undersized",
 				key, tokens, limiter.Burst(), numKeys)
@@ -69,9 +67,6 @@ func NewInMemoryLimiter(now func() time.Time) *InMemoryLimiter {
 	}
 }
 
-// createThrottle returns a function that runs work at most once per every,
-// dropping calls in between. The lock is held across work so two racing
-// callers within the same window can't both run it.
 func createThrottle(every time.Duration, now func() time.Time) func(work func()) {
 	var mu sync.Mutex
 	var nextRun time.Time // Zero value => the first call always runs.
