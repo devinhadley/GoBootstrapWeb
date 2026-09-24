@@ -11,9 +11,10 @@ import (
 	"devinhadley/gobootstrapweb/internal/service/user"
 )
 
+// Conveinence wrappers for per handler rate limiting...
+
 type rateLimiter interface {
-	AddOccurrence(key string) error
-	IsLimited(key string, p ratelimit.Policy) (bool, error)
+	Allow(key string, p ratelimit.Policy) (bool, error)
 }
 
 var (
@@ -36,19 +37,14 @@ func limitByField(w http.ResponseWriter, r *http.Request, limiter rateLimiter, f
 }
 
 func limited(w http.ResponseWriter, limiter rateLimiter, key string, p ratelimit.Policy) bool {
-	isLimited, err := limiter.IsLimited(key, p)
+	allowed, err := limiter.Allow(key, p)
 	if err != nil {
 		log.Printf("checking rate limit for key %q: %v", key, err)
 	}
 
-	if isLimited {
+	if !allowed {
 		w.WriteHeader(http.StatusTooManyRequests)
 		return true
-	}
-
-	// Could become limited affet this, but thats okay. Not worth requiring lock for reads.
-	if err := limiter.AddOccurrence(key); err != nil {
-		log.Printf("recording rate limit occurrence for key %q: %v", key, err)
 	}
 
 	return false

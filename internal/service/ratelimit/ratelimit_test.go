@@ -5,129 +5,94 @@ import (
 	"time"
 )
 
-func TestIsLimitedFalseBeforeThresholdReached(t *testing.T) {
+func TestAllowTrueWithinBurst(t *testing.T) {
 	clock := newFakeClock()
 	limiter := NewInMemoryLimiter(clock.Now)
 	policy := Policy{Count: 3, Per: time.Minute}
 
-	for i := range 2 {
-		limited, err := limiter.IsLimited("key", policy)
+	for i := range 3 {
+		allowed, err := limiter.Allow("key", policy)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if limited {
-			t.Fatalf("occurrence %d: got limited, want not limited", i)
-		}
-
-		if err := limiter.AddOccurrence("key"); err != nil {
-			t.Fatalf("unexpected error adding occurrence: %v", err)
+		if !allowed {
+			t.Fatalf("occurrence %d: got not allowed, want allowed", i)
 		}
 	}
 }
 
-func TestIsLimitedTrueAtThreshold(t *testing.T) {
+func TestAllowFalseAfterBurstExhausted(t *testing.T) {
 	clock := newFakeClock()
 	limiter := NewInMemoryLimiter(clock.Now)
 	policy := Policy{Count: 3, Per: time.Minute}
 
 	for range 3 {
-		if err := limiter.AddOccurrence("key"); err != nil {
-			t.Fatalf("unexpected error adding occurrence: %v", err)
+		if _, err := limiter.Allow("key", policy); err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	}
 
-	limited, err := limiter.IsLimited("key", policy)
+	allowed, err := limiter.Allow("key", policy)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !limited {
-		t.Fatal("got not limited after reaching Count occurrences, want limited")
+	if allowed {
+		t.Fatal("got allowed after exhausting the burst, want not allowed")
 	}
 }
 
-func TestIsLimitedDecaysAfterWindowElapses(t *testing.T) {
+func TestAllowRefillsOverTime(t *testing.T) {
 	clock := newFakeClock()
 	limiter := NewInMemoryLimiter(clock.Now)
 	policy := Policy{Count: 3, Per: time.Minute}
 
 	for range 3 {
-		if err := limiter.AddOccurrence("key"); err != nil {
-			t.Fatalf("unexpected error adding occurrence: %v", err)
+		if _, err := limiter.Allow("key", policy); err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	}
 
-	limited, err := limiter.IsLimited("key", policy)
+	// One refill interval (Per/Count) worth of time passing should hand
+	// back exactly one more token.
+	clock.Advance(policy.Per/time.Duration(policy.Count) + time.Second)
+
+	allowed, err := limiter.Allow("key", policy)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !limited {
-		t.Fatal("got not limited after reaching Count occurrences, want limited")
+	if !allowed {
+		t.Fatal("got not allowed after a refill interval elapsed, want allowed")
 	}
 
-	clock.Advance(policy.Per + time.Second)
-
-	limited, err = limiter.IsLimited("key", policy)
+	// The bucket should be empty again immediately after consuming that
+	// refilled token.
+	allowed, err = limiter.Allow("key", policy)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if limited {
-		t.Fatal("got limited after the window elapsed, want not limited")
+	if allowed {
+		t.Fatal("got allowed immediately after consuming the one refilled token, want not allowed")
 	}
 }
 
-func TestIsLimitedPartialDecay(t *testing.T) {
-	clock := newFakeClock()
-	limiter := NewInMemoryLimiter(clock.Now)
-	policy := Policy{Count: 2, Per: time.Minute}
-
-	if err := limiter.AddOccurrence("key"); err != nil {
-		t.Fatalf("unexpected error adding occurrence: %v", err)
-	}
-
-	clock.Advance(policy.Per + time.Second)
-
-	for range 2 {
-		if err := limiter.AddOccurrence("key"); err != nil {
-			t.Fatalf("unexpected error adding occurrence: %v", err)
-		}
-	}
-
-	limited, err := limiter.IsLimited("key", policy)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !limited {
-		t.Fatal("got not limited with 2 occurrences in-window at Count 2, want limited")
-	}
-}
-
-func TestIsLimitedFalseForUnknownKey(t *testing.T) {
-	limiter := NewInMemoryLimiter(time.Now)
-
-	limited, err := limiter.IsLimited("never-seen", Policy{Count: 1, Per: time.Minute})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if limited {
-		t.Fatal("got limited for a key with no occurrences, want not limited")
-	}
-}
-
-func TestIsLimitedKeysAreIndependent(t *testing.T) {
+func TestAllowKeysAreIndependent(t *testing.T) {
 	clock := newFakeClock()
 	limiter := NewInMemoryLimiter(clock.Now)
 	policy := Policy{Count: 1, Per: time.Minute}
 
-	if err := limiter.AddOccurrence("key-a"); err != nil {
-		t.Fatalf("unexpected error adding occurrence: %v", err)
+	if _, err := limiter.Allow("key-a", policy); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := limiter.Allow("key-a", policy); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	limited, err := limiter.IsLimited("key-b", policy)
+	allowed, err := limiter.Allow("key-b", policy)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if limited {
-		t.Fatal("got key-b limited by an occurrence recorded against key-a")
+	if !allowed {
+		t.Fatal("got key-b denied by an occurrence recorded against key-a")
 	}
 }
 

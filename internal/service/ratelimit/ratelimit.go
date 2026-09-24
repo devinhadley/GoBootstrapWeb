@@ -13,72 +13,52 @@
 package ratelimit
 
 import (
-	"slices"
+	"log"
 	"sync"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
+	"golang.org/x/time/rate"
 )
 
-const (
-	maxCount    = 1000   // Max number of occurrences to store per key.
-	retainCount = 200    // When freeing space per key, how many of the most recent occurrences to keep.
-	numKeys     = 10_000 // Number of keys in the LRU before eviction kicks in.
-)
+// numKeys is the number of keys in the LRU before eviction kicks in.
+const numKeys = 1000
+
+// evictionWarnInterval throttles the eviction warning so a thrashing cache
+// can't flood the logs.
+const evictionWarnInterval = 30 * time.Second
 
 // Policy is a rate limit: at most Count occurrences of a key within Per.
+// Count must be > 0.
 type Policy struct {
 	Count int
 	Per   time.Duration
 }
 
-type Occurrences struct {
-	mu    sync.RWMutex
-	times []time.Time // Strictly increasing timestamps.
-}
-
-func (o *Occurrences) addOccurrenceAt(now func() time.Time) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	// Preserve only the most recent (retainCount) items, since that's what rate limiting usually cares about anyway.
-	if len(o.times) >= maxCount {
-		retained := make(
-			[]time.Time,
-			retainCount,
-			maxCount,
-		)
-
-		copy(
-			retained,
-			o.times[len(o.times)-retainCount:],
-		)
-
-		o.times = retained
-	}
-
-	o.times = append(o.times, now())
-}
-
-func (o *Occurrences) countFrom(now time.Time, per time.Duration) int {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-
-	startingAt := now.Add(-per)
-
-	// The equivalent of bisect left...
-	i, _ := slices.BinarySearchFunc(o.times, startingAt, time.Time.Compare)
-
-	return len(o.times) - i
-}
-
 type InMemoryLimiter struct {
-	lruCache *lru.Cache[string, *Occurrences]
+	lruCache *lru.Cache[string, *rate.Limiter]
 	now      func() time.Time
 }
 
 func NewInMemoryLimiter(now func() time.Time) *InMemoryLimiter {
-	entries, err := lru.New[string, *Occurrences](numKeys)
+	warnEvict := createThrottle(evictionWarnInterval, now)
+
+	onEvict := func(key string, limiter *rate.Limiter) {
+		// A full bucket had already refilled, so the key would get an
+		// identical one next request. Only a partially drained bucket
+		// means the eviction actually handed back allowance.
+		tokens := limiter.TokensAt(now())
+		if tokens == float64(limiter.Burst()) {
+			return
+		}
+
+		warnEvict(func() {
+			log.Printf("ratelimit: WARNING evicted %q with %.1f/%d tokens left; LRU of %d keys may be undersized",
+				key, tokens, limiter.Burst(), numKeys)
+		})
+	}
+
+	entries, err := lru.NewWithEvict(numKeys, onEvict)
 	if err != nil {
 		panic(err) // Initialized at application startup, so a fine panic.
 	}
@@ -89,36 +69,42 @@ func NewInMemoryLimiter(now func() time.Time) *InMemoryLimiter {
 	}
 }
 
-func (s *InMemoryLimiter) AddOccurrence(key string) error {
-	// A bit odd we allocate no matter what. But, I don't have to have to handle a mutex here
-	// just to prevent race conditon when adding if not present.
-	// I.e. if two threads read empty then both write new, one gets overwritten.
-	// https://github.com/hashicorp/golang-lru/issues/239
-	newOccurrences := &Occurrences{
-		times: make([]time.Time, 0, 1),
+// createThrottle returns a function that runs work at most once per every,
+// dropping calls in between. The lock is held across work so two racing
+// callers within the same window can't both run it.
+func createThrottle(every time.Duration, now func() time.Time) func(work func()) {
+	var mu sync.Mutex
+	var nextRun time.Time // Zero value => the first call always runs.
+
+	return func(work func()) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		t := now()
+		if t.Before(nextRun) {
+			return
+		}
+		work()
+		nextRun = t.Add(every)
 	}
-
-	// To add new occurances, it must not be in the LRU.
-	existing, ok, _ := s.lruCache.PeekOrAdd(key, newOccurrences)
-
-	occurrences := newOccurrences
-	if ok {
-		occurrences = existing
-	}
-
-	occurrences.addOccurrenceAt(s.now)
-
-	return nil
 }
 
-// IsLimited reports whether key has had p.Count or more occurrences within
-// p.Per. Callers should not expect to see more than retainCount past
-// occurrences for a key due to the eviction policy above.
-func (s *InMemoryLimiter) IsLimited(key string, p Policy) (bool, error) {
-	occurrences, ok := s.lruCache.Get(key)
-	if !ok {
-		return false, nil
+func (s *InMemoryLimiter) Allow(key string, p Policy) (bool, error) {
+
+	if limiter, ok := s.lruCache.Get(key); ok {
+		return limiter.AllowN(s.now(), 1), nil
 	}
 
-	return occurrences.countFrom(s.now(), p.Per) >= p.Count, nil
+	candidate := rate.NewLimiter(rate.Every(p.Per/time.Duration(p.Count)), p.Count)
+
+	// To add new limiters, key must not already be in the LRU (dont wan't to overwrite anything added after get).
+	// Whether its in there or not could have changed from when we get.
+	existing, ok, _ := s.lruCache.PeekOrAdd(key, candidate)
+
+	limiter := candidate
+	if ok {
+		limiter = existing
+	}
+
+	return limiter.AllowN(s.now(), 1), nil
 }
