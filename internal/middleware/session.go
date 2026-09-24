@@ -30,7 +30,7 @@ type sessionAndUser struct {
 
 type sessionMiddlewareService interface {
 	GetSession(ctx context.Context, sessionID []byte) (session.Session, error)
-	ExpireSession(ctx context.Context, sessionID []byte) error
+	DeleteSession(ctx context.Context, sessionID []byte) error
 	RotateSession(ctx context.Context, sessionID []byte) (session.Session, error)
 	UpdateLastSeen(ctx context.Context, session session.Session) error
 }
@@ -39,13 +39,8 @@ type userGetter interface {
 	GetUserByID(ctx context.Context, id int64) (user.User, error)
 }
 
-// AuthenticatedHandlerFunc is an http handler which additionally receives the requesting
-// user and their current session. Use WithUser to adapt one into an http.Handler.
 type AuthenticatedHandlerFunc func(w http.ResponseWriter, r *http.Request, usr user.User, sess session.Session)
 
-// WithUser requires an authenticated session and resolves the current user, passing both
-// directly to next. Views using it don't need to resolve either or handle errors
-// themselves: no session yields a 401, a user resolution failure a 500.
 func WithUser(next AuthenticatedHandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		su, ok := r.Context().Value(userContextKey).(sessionAndUser)
@@ -101,9 +96,9 @@ func CreateSessionMiddleware(userService userGetter, sessionService sessionMiddl
 		}
 
 		if curSession.IsExpired() {
-			err = sessionService.ExpireSession(r.Context(), curSession.DBSession().ID)
+			err = sessionService.DeleteSession(r.Context(), curSession.DBSession().ID)
 			if err != nil {
-				log.Printf("Error when expiring session: %v", err)
+				log.Printf("Error when deleting session: %v", err)
 			}
 			web.ClearSessionCookie(w)
 			next.ServeHTTP(w, r)

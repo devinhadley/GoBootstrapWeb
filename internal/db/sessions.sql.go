@@ -17,7 +17,7 @@ INSERT INTO sessions (
     $1,
     $2
 )
-RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at, is_active
+RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at
 `
 
 type CreateSessionParams struct {
@@ -34,55 +34,51 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.CreatedAt,
 		&i.LastSeenAt,
 		&i.LastRefreshedAt,
-		&i.IsActive,
 	)
 	return i, err
 }
 
-const deactivateAllSessionsForUser = `-- name: DeactivateAllSessionsForUser :exec
-UPDATE sessions
-SET is_active = FALSE
-WHERE user_id = $1 AND is_active = TRUE
+const deleteAllSessionsForUser = `-- name: DeleteAllSessionsForUser :exec
+DELETE FROM sessions
+WHERE user_id = $1
 `
 
-func (q *Queries) DeactivateAllSessionsForUser(ctx context.Context, userID int64) error {
-	_, err := q.db.Exec(ctx, deactivateAllSessionsForUser, userID)
+func (q *Queries) DeleteAllSessionsForUser(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteAllSessionsForUser, userID)
 	return err
 }
 
-const deactivateLeastRecentlyUsedSessionForUser = `-- name: DeactivateLeastRecentlyUsedSessionForUser :exec
-UPDATE sessions
-SET is_active = FALSE
+const deleteLeastRecentlyUsedSessionForUser = `-- name: DeleteLeastRecentlyUsedSessionForUser :exec
+DELETE FROM sessions
 WHERE id = (
   SELECT s.id
   FROM sessions s
-  WHERE s.user_id = $1 and is_active = TRUE
+  WHERE s.user_id = $1
   ORDER BY s.last_seen_at ASC
   LIMIT 1
 )
 `
 
-func (q *Queries) DeactivateLeastRecentlyUsedSessionForUser(ctx context.Context, userID int64) error {
-	_, err := q.db.Exec(ctx, deactivateLeastRecentlyUsedSessionForUser, userID)
+func (q *Queries) DeleteLeastRecentlyUsedSessionForUser(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteLeastRecentlyUsedSessionForUser, userID)
 	return err
 }
 
-const deactivateSession = `-- name: DeactivateSession :exec
-UPDATE sessions
-SET is_active = FALSE
-WHERE id = $1 and is_active = TRUE
+const deleteSession = `-- name: DeleteSession :exec
+DELETE FROM sessions
+WHERE id = $1
 `
 
-func (q *Queries) DeactivateSession(ctx context.Context, id []byte) error {
-	_, err := q.db.Exec(ctx, deactivateSession, id)
+func (q *Queries) DeleteSession(ctx context.Context, id []byte) error {
+	_, err := q.db.Exec(ctx, deleteSession, id)
 	return err
 }
 
 const getActiveSession = `-- name: GetActiveSession :one
-SELECT s.id, s.user_id, s.created_at, s.last_seen_at, s.last_refreshed_at, s.is_active
+SELECT s.id, s.user_id, s.created_at, s.last_seen_at, s.last_refreshed_at
 FROM sessions s
 JOIN users u on s.user_id = u.id 
-WHERE s.id = $1 AND s.is_active = TRUE and u.is_active = TRUE
+WHERE s.id = $1 AND u.is_active = TRUE
 `
 
 func (q *Queries) GetActiveSession(ctx context.Context, id []byte) (Session, error) {
@@ -94,7 +90,6 @@ func (q *Queries) GetActiveSession(ctx context.Context, id []byte) (Session, err
 		&i.CreatedAt,
 		&i.LastSeenAt,
 		&i.LastRefreshedAt,
-		&i.IsActive,
 	)
 	return i, err
 }
@@ -102,7 +97,7 @@ func (q *Queries) GetActiveSession(ctx context.Context, id []byte) (Session, err
 const getSessionCountByUser = `-- name: GetSessionCountByUser :one
 SELECT COUNT(*)
 FROM sessions
-WHERE user_id = $1 and is_active = TRUE
+WHERE user_id = $1
 `
 
 func (q *Queries) GetSessionCountByUser(ctx context.Context, userID int64) (int64, error) {
@@ -115,8 +110,8 @@ func (q *Queries) GetSessionCountByUser(ctx context.Context, userID int64) (int6
 const updateSessionIDAndRefreshedAt = `-- name: UpdateSessionIDAndRefreshedAt :one
 UPDATE sessions
 SET id = $2, last_refreshed_at = NOW()
-WHERE id = $1 and is_active = TRUE
-RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at, is_active
+WHERE id = $1
+RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at
 `
 
 type UpdateSessionIDAndRefreshedAtParams struct {
@@ -133,7 +128,6 @@ func (q *Queries) UpdateSessionIDAndRefreshedAt(ctx context.Context, arg UpdateS
 		&i.CreatedAt,
 		&i.LastSeenAt,
 		&i.LastRefreshedAt,
-		&i.IsActive,
 	)
 	return i, err
 }
@@ -141,8 +135,8 @@ func (q *Queries) UpdateSessionIDAndRefreshedAt(ctx context.Context, arg UpdateS
 const updateSessionLastSeenToNow = `-- name: UpdateSessionLastSeenToNow :one
 UPDATE sessions
 SET last_seen_at = NOW()
-WHERE id = $1 and is_active = TRUE
-RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at, is_active
+WHERE id = $1
+RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at
 `
 
 func (q *Queries) UpdateSessionLastSeenToNow(ctx context.Context, id []byte) (Session, error) {
@@ -154,7 +148,6 @@ func (q *Queries) UpdateSessionLastSeenToNow(ctx context.Context, id []byte) (Se
 		&i.CreatedAt,
 		&i.LastSeenAt,
 		&i.LastRefreshedAt,
-		&i.IsActive,
 	)
 	return i, err
 }

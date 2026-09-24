@@ -27,7 +27,6 @@ type Session struct {
 	CreatedAt       pgtype.Timestamptz
 	LastSeenAt      pgtype.Timestamptz
 	LastRefreshedAt pgtype.Timestamptz
-	IsActive        bool
 }
 
 type User struct {

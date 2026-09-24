@@ -84,7 +84,7 @@ func TestLogoutIntegration(t *testing.T) {
 		t.Skip("skipping integration tests in short mode")
 	}
 
-	t.Run("logout succeeds, clears cookie, and deactivates only the requesting session", testLogoutSucceeds)
+	t.Run("logout succeeds, clears cookie, and deletes only the requesting session", testLogoutSucceeds)
 }
 
 func TestGetUserIntegration(t *testing.T) {
@@ -101,16 +101,16 @@ func TestPasswordResetIntegration(t *testing.T) {
 	}
 
 	// authenticated password reset.
-	t.Run("password reset succeeds with authenticated user and deactivates sessions", testAuthenticatedPasswordResetSucceeds)
-	t.Run("password reset fails with incorrect password and doesnt deactivate sessions", testAuthenticatedPasswordResetFailsWithWrongPassword)
-	t.Run("password reset fails with weak password and doesnt deactivate sessions", testAuthenticatedPasswordResetFailsWithWeakPassword)
+	t.Run("password reset succeeds with authenticated user and deletes sessions", testAuthenticatedPasswordResetSucceeds)
+	t.Run("password reset fails with incorrect password and doesnt delete sessions", testAuthenticatedPasswordResetFailsWithWrongPassword)
+	t.Run("password reset fails with weak password and doesnt delete sessions", testAuthenticatedPasswordResetFailsWithWeakPassword)
 	t.Run("password reset fails without authenticated user", testAuthenticatedPasswordResetFailsWithoutAuthenticatedUser)
 
 	// token based password reset.
 	t.Run("can create password reset request", testCanCreatePasswordResetRequest)
 	t.Run("creating password reset request for unknown user returns 204", testCreatingPasswordResetRequestForUnknownUserReturns204)
 
-	t.Run("password reset suceeds with a valid reset token and deactivates sessions", testPasswordResetSucceedsWithValidResetTokenAndDeactivatesSessions)
+	t.Run("password reset suceeds with a valid reset token and deletes sessions", testPasswordResetSucceedsWithValidResetTokenAndDeletesSessions)
 	t.Run("cant reset password with incorrect token", testCantResetPasswordWithIncorrectToken)
 	t.Run("cant reset password with already used token", testCantResetPasswordWithAlreadyUsedToken)
 }
@@ -121,8 +121,8 @@ func TestEmailResetIntegration(t *testing.T) {
 	}
 
 	t.Run("email reset request succeeds and sends emails", testEmailResetRequestSucceeds)
-	t.Run("email reset confirm succeeds and deactivates sessions", testEmailResetConfirmSucceeds)
-	t.Run("email reset request fails with incorrect password and doesnt deactivate sessions", testEmailResetRequestFailsWithWrongPassword)
+	t.Run("email reset confirm succeeds and deletes sessions", testEmailResetConfirmSucceeds)
+	t.Run("email reset request fails with incorrect password and doesnt delete sessions", testEmailResetRequestFailsWithWrongPassword)
 	t.Run("email reset request fails when new email already in use", testEmailResetRequestFailsWhenNewEmailAlreadyInUse)
 	t.Run("email reset request fails without authenticated user", testEmailResetRequestFailsWithoutAuthenticatedUser)
 	t.Run("email reset confirm fails with invalid token", testEmailResetConfirmFailsWithInvalidToken)
@@ -479,7 +479,7 @@ func testLogoutSucceeds(t *testing.T) {
 		t.Fatal("expected handler to clear session cookie")
 	}
 
-	assertSessionActiveState(t, deps.pool, sum[:], false)
+	assertSessionExists(t, deps.pool, sum[:], false)
 
 	activeCountAfter, err := deps.queries.GetSessionCountByUser(ctx, createdUser.DBUser().ID)
 	if err != nil {
@@ -706,7 +706,7 @@ func testCreatingPasswordResetRequestForUnknownUserReturns204(t *testing.T) {
 	}
 }
 
-func testPasswordResetSucceedsWithValidResetTokenAndDeactivatesSessions(t *testing.T) {
+func testPasswordResetSucceedsWithValidResetTokenAndDeletesSessions(t *testing.T) {
 	deps := setupUserIntegrationDeps(t)
 	ctx := context.Background()
 

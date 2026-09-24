@@ -31,8 +31,8 @@ func TestSessionMiddlewareCannotAuthenticateIntegration(t *testing.T) {
 }
 
 func TestExpiredSessionIntegration(t *testing.T) {
-	t.Run("an absolutely expired session is deactivated and user not authenticated", testAbsoluteExpiration)
-	t.Run("an idle expired session is deactivated and user not authenticated", testIdleExpiration)
+	t.Run("an absolutely expired session is deleted and user not authenticated", testAbsoluteExpiration)
+	t.Run("an idle expired session is deleted and user not authenticated", testIdleExpiration)
 }
 
 func TestRotateSessionIntegration(t *testing.T) {
@@ -40,7 +40,7 @@ func TestRotateSessionIntegration(t *testing.T) {
 }
 
 func TestCreateSessionIntegration(t *testing.T) {
-	t.Run("creating eleventh session deactivates only least recently used session", testCreateSessionDeactivatesOnlyLeastRecentlyUsedSessionWhenLimitExceeded)
+	t.Run("creating eleventh session deletes only least recently used session", testCreateSessionDeletesOnlyLeastRecentlyUsedSessionWhenLimitExceeded)
 }
 
 func TestUpdateLastSeenIntegration(t *testing.T) {
@@ -259,7 +259,7 @@ func testValidSessionButUserInactive(t *testing.T) {
 		t.Fatal("expected middleware to clear session cookie")
 	}
 
-	assertSessionActiveState(t, deps.pool, createdSession.Session.DBSession().ID, true)
+	assertSessionExists(t, deps.pool, createdSession.Session.DBSession().ID, true)
 }
 
 func testAbsoluteExpiration(t *testing.T) {
@@ -306,7 +306,7 @@ func testAbsoluteExpiration(t *testing.T) {
 		t.Fatal("expected inner handler not to be called for an unauthenticated request")
 	}
 
-	assertSessionActiveState(t, deps.pool, createdSession.Session.DBSession().ID, false)
+	assertSessionExists(t, deps.pool, createdSession.Session.DBSession().ID, false)
 
 	foundClearedCookie := false
 	for _, cookie := range rec.Result().Cookies() {
@@ -370,7 +370,7 @@ func testIdleExpiration(t *testing.T) {
 		t.Fatal("expected inner handler not to be called for an unauthenticated request")
 	}
 
-	assertSessionActiveState(t, deps.pool, createdSession.Session.DBSession().ID, false)
+	assertSessionExists(t, deps.pool, createdSession.Session.DBSession().ID, false)
 
 	foundClearedCookie := false
 	for _, cookie := range rec.Result().Cookies() {
@@ -464,7 +464,7 @@ func testSessionRotation(t *testing.T) {
 	}
 }
 
-func testCreateSessionDeactivatesOnlyLeastRecentlyUsedSessionWhenLimitExceeded(t *testing.T) {
+func testCreateSessionDeletesOnlyLeastRecentlyUsedSessionWhenLimitExceeded(t *testing.T) {
 	deps := getTestDependencies(t)
 	ctx := context.Background()
 
@@ -493,18 +493,18 @@ func testCreateSessionDeactivatesOnlyLeastRecentlyUsedSessionWhenLimitExceeded(t
 		t.Fatalf("failed to create eleventh session %v", err)
 	}
 
-	assertSessionActiveState(t, deps.pool, sessions[0].Session.DBSession().ID, false)
+	assertSessionExists(t, deps.pool, sessions[0].Session.DBSession().ID, false)
 
 	_, err = deps.sessionService.GetSession(ctx, sessions[0].RawID)
 	if !errors.Is(err, session.ErrSessionNotFound) {
-		t.Fatalf("wanted error %v for deactivated session, got %v", session.ErrSessionNotFound, err)
+		t.Fatalf("wanted error %v for deleted session, got %v", session.ErrSessionNotFound, err)
 	}
 
 	for i := 1; i < len(sessions); i++ {
-		assertSessionActiveState(t, deps.pool, sessions[i].Session.DBSession().ID, true)
+		assertSessionExists(t, deps.pool, sessions[i].Session.DBSession().ID, true)
 	}
 
-	assertSessionActiveState(t, deps.pool, eleventhSession.Session.DBSession().ID, true)
+	assertSessionExists(t, deps.pool, eleventhSession.Session.DBSession().ID, true)
 }
 
 func testUpdateLastSeenWhenThresholdReached(t *testing.T) {
@@ -590,7 +590,7 @@ func makeSessionAbsolutelyExpired(t *testing.T, deps sessionIntegrationTestDepen
 	}
 
 	if tag.RowsAffected() != 1 {
-		t.Fatalf("wanted 1 row affected when expiring session, got %d", tag.RowsAffected())
+		t.Fatalf("wanted 1 row affected when deleting session, got %d", tag.RowsAffected())
 	}
 }
 
@@ -657,24 +657,20 @@ func makeSessionLastSeenEarlier(t *testing.T, deps sessionIntegrationTestDepende
 	}
 }
 
-func assertSessionActiveState(t *testing.T, pool *pgxpool.Pool, sessionId []byte, expectedIsActive bool) {
+func assertSessionExists(t *testing.T, pool *pgxpool.Pool, sessionId []byte, expectedExists bool) {
 	t.Helper()
 
 	query := `
-	SELECT is_active
-	FROM sessions
-	WHERE id = $1;
+	SELECT EXISTS (SELECT 1 FROM sessions WHERE id = $1);
 	`
-	row := pool.QueryRow(context.Background(), query, sessionId)
-
-	var isActive bool
-	err := row.Scan(&isActive)
+	var exists bool
+	err := pool.QueryRow(context.Background(), query, sessionId).Scan(&exists)
 	if err != nil {
-		t.Fatalf("failed to get session is_active when asserting state %v", err)
+		t.Fatalf("failed to check session existence %v", err)
 	}
 
-	if isActive != expectedIsActive {
-		t.Fatalf("wanted session is_active %v, got %v", expectedIsActive, isActive)
+	if exists != expectedExists {
+		t.Fatalf("wanted session exists %v, got %v", expectedExists, exists)
 	}
 }
 

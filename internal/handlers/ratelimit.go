@@ -11,8 +11,6 @@ import (
 	"devinhadley/gobootstrapweb/internal/service/user"
 )
 
-// Conveinence wrappers for per handler rate limiting...
-
 type rateLimiter interface {
 	Allow(key string, p ratelimit.Policy) (bool, error)
 }
@@ -23,6 +21,8 @@ var (
 	emailResetRequestLimit    = ratelimit.Policy{Count: 3, Per: 1 * time.Hour}
 	authedPasswordResetLimit  = ratelimit.Policy{Count: 5, Per: 1 * time.Hour}
 )
+
+// Conveinence wrappers for per handler rate limiting...
 
 func limitByUser(w http.ResponseWriter, r *http.Request, limiter rateLimiter, usr user.User, p ratelimit.Policy) bool {
 	key := fmt.Sprintf("%v:user:%v", r.Pattern, usr.DBUser().ID)

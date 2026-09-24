@@ -15,12 +15,12 @@ type sessionCreator interface {
 	CreateSession(ctx context.Context, userID int64) (session.CreateSessionResult, error)
 }
 
-type sessionDeactivator interface {
-	DeactivateAllSessionsForUser(ctx context.Context, userID int64) error
+type sessionDeleter interface {
+	DeleteAllSessionsForUser(ctx context.Context, userID int64) error
 }
 
-type sessionExpirer interface {
-	ExpireSession(ctx context.Context, sessionID []byte) error
+type currentSessionDeleter interface {
+	DeleteSession(ctx context.Context, sessionID []byte) error
 }
 
 type signUpper interface {
@@ -117,10 +117,10 @@ func CreateLoginHandler(userService logInner, sessionService sessionCreator, lim
 	})
 }
 
-func CreateLogoutHandler(service sessionExpirer) http.Handler {
+func CreateLogoutHandler(service currentSessionDeleter) http.Handler {
 	return middleware.WithUser(func(w http.ResponseWriter, r *http.Request, usr user.User, sess session.Session) {
-		if err := service.ExpireSession(r.Context(), sess.DBSession().ID); err != nil {
-			log.Printf("Error when expiring session: %v", err)
+		if err := service.DeleteSession(r.Context(), sess.DBSession().ID); err != nil {
+			log.Printf("Error when deleting session: %v", err)
 		}
 		web.ClearSessionCookie(w)
 		w.WriteHeader(http.StatusNoContent)
@@ -136,7 +136,7 @@ func CreateGetUserHandler() http.Handler {
 	})
 }
 
-func CreateAuthenticatedPasswordResetHandler(userService authenticatedPasswordResetter, sessionService sessionDeactivator, limiter rateLimiter) http.Handler {
+func CreateAuthenticatedPasswordResetHandler(userService authenticatedPasswordResetter, sessionService sessionDeleter, limiter rateLimiter) http.Handler {
 	return middleware.WithUser(func(w http.ResponseWriter, r *http.Request, usr user.User, _ session.Session) {
 		if limitByUser(w, r, limiter, usr, authedPasswordResetLimit) {
 			return
@@ -156,8 +156,8 @@ func CreateAuthenticatedPasswordResetHandler(userService authenticatedPasswordRe
 			return
 		}
 
-		if err := sessionService.DeactivateAllSessionsForUser(r.Context(), usr.DBUser().ID); err != nil {
-			log.Printf("deactivating all sessions during authenticated password reset: %v", err)
+		if err := sessionService.DeleteAllSessionsForUser(r.Context(), usr.DBUser().ID); err != nil {
+			log.Printf("deleting all sessions during authenticated password reset: %v", err)
 		}
 
 		web.ClearSessionCookie(w)
@@ -190,7 +190,7 @@ func CreatePasswordResetRequestHandler(userService passwordResetRequester, limit
 	})
 }
 
-func CreateTokenPasswordResetHandler(userService tokenPasswordResetter, sessionService sessionDeactivator) http.Handler {
+func CreateTokenPasswordResetHandler(userService tokenPasswordResetter, sessionService sessionDeleter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := r.URL.Query().Get("token") // WAF should rate limit by ip as to limit enumeration
 
@@ -209,8 +209,8 @@ func CreateTokenPasswordResetHandler(userService tokenPasswordResetter, sessionS
 			return
 		}
 
-		if err := sessionService.DeactivateAllSessionsForUser(r.Context(), userID); err != nil {
-			log.Printf("deactivating all sessions during reset from token: %v", err)
+		if err := sessionService.DeleteAllSessionsForUser(r.Context(), userID); err != nil {
+			log.Printf("deleting all sessions during reset from token: %v", err)
 		}
 
 		w.WriteHeader(http.StatusNoContent)
@@ -243,7 +243,7 @@ func CreateEmailResetRequestHandler(userService emailResetRequester, limiter rat
 	})
 }
 
-func CreateTokenEmailResetHandler(userService tokenEmailResetter, sessionService sessionDeactivator) http.Handler {
+func CreateTokenEmailResetHandler(userService tokenEmailResetter, sessionService sessionDeleter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := r.URL.Query().Get("token")
 
@@ -257,8 +257,8 @@ func CreateTokenEmailResetHandler(userService tokenEmailResetter, sessionService
 			return
 		}
 
-		if err := sessionService.DeactivateAllSessionsForUser(r.Context(), userID); err != nil {
-			log.Printf("deactivating all sessions during email reset from token: %v", err)
+		if err := sessionService.DeleteAllSessionsForUser(r.Context(), userID); err != nil {
+			log.Printf("deleting all sessions during email reset from token: %v", err)
 		}
 
 		w.WriteHeader(http.StatusNoContent)
