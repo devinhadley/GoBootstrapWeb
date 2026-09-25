@@ -1,7 +1,7 @@
 services:
   mailhog:
     image: mailhog/mailhog
-    container_name: mailhog
+    container_name: gobootstrapweb_mailhog
     restart: unless-stopped
     ports:
       - "1025:1025"
@@ -9,7 +9,7 @@ services:
 
   postgres:
     image: postgres:17
-    container_name: postgres
+    container_name: gobootstrapweb_postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: app_db

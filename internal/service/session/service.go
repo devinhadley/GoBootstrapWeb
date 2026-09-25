@@ -15,13 +15,13 @@ import (
 
 type SessionQueries interface {
 	CreateSession(ctx context.Context, arg db.CreateSessionParams) (db.Session, error)
-	DeactivateLeastRecentlyUsedSessionForUser(ctx context.Context, userID int64) error
-	GetActiveSession(ctx context.Context, id []byte) (db.Session, error)
+	DeleteLeastRecentlyUsedSessionForUser(ctx context.Context, userID int64) error
+	GetSession(ctx context.Context, id []byte) (db.Session, error)
 	GetSessionCountByUser(ctx context.Context, userID int64) (int64, error)
 	UpdateSessionIDAndRefreshedAt(ctx context.Context, arg db.UpdateSessionIDAndRefreshedAtParams) (db.Session, error)
 	UpdateSessionLastSeenToNow(ctx context.Context, id []byte) (db.Session, error)
-	DeactivateSession(ctx context.Context, id []byte) error
-	DeactivateAllSessionsForUser(ctx context.Context, userID int64) error
+	DeleteSession(ctx context.Context, id []byte) error
+	DeleteAllSessionsForUser(ctx context.Context, userID int64) error
 }
 
 type Service struct {
@@ -53,9 +53,9 @@ func (s *Service) CreateSession(ctx context.Context, userID int64) (CreateSessio
 	}
 
 	if numSessions >= MaxNumberOfActiveSessions {
-		err = s.queries.DeactivateLeastRecentlyUsedSessionForUser(ctx, userID)
+		err = s.queries.DeleteLeastRecentlyUsedSessionForUser(ctx, userID)
 		if err != nil {
-			return CreateSessionResult{}, fmt.Errorf("deactivating least recently used session: %w", err)
+			return CreateSessionResult{}, fmt.Errorf("deleting least recently used session: %w", err)
 		}
 	}
 
@@ -86,7 +86,7 @@ func (s *Service) GetSession(ctx context.Context, sessionID []byte) (Session, er
 	sum := sha256.Sum256(sessionID)
 	idHash := sum[:]
 
-	session, err := s.queries.GetActiveSession(ctx, idHash)
+	session, err := s.queries.GetSession(ctx, idHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Session{}, ErrSessionNotFound
@@ -97,10 +97,12 @@ func (s *Service) GetSession(ctx context.Context, sessionID []byte) (Session, er
 	return SessionFromDB(session), nil
 }
 
-func (s *Service) ExpireSession(ctx context.Context, sessionID []byte) error {
-	err := s.queries.DeactivateSession(ctx, sessionID)
+// DeleteSession expects sessionID to already be the stored hash (e.g. DBSession().ID),
+// not the raw session ID from the cookie — unlike GetSession, which hashes internally.
+func (s *Service) DeleteSession(ctx context.Context, sessionID []byte) error {
+	err := s.queries.DeleteSession(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("expiring session: %w", err)
+		return fmt.Errorf("deleting session: %w", err)
 	}
 
 	return nil
@@ -140,8 +142,8 @@ func (s *Service) RotateSession(ctx context.Context, sessionID []byte) (Session,
 	return SessionFromDB(updatedSession), nil
 }
 
-func (s *Service) DeactivateAllSessionsForUser(ctx context.Context, userID int64) error {
-	err := s.queries.DeactivateAllSessionsForUser(ctx, userID)
+func (s *Service) DeleteAllSessionsForUser(ctx context.Context, userID int64) error {
+	err := s.queries.DeleteAllSessionsForUser(ctx, userID)
 	if err != nil {
 		return err
 	}

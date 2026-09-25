@@ -15,8 +15,12 @@ type sessionCreator interface {
 	CreateSession(ctx context.Context, userID int64) (session.CreateSessionResult, error)
 }
 
-type sessionDeactivator interface {
-	DeactivateAllSessionsForUser(ctx context.Context, userID int64) error
+type sessionDeleter interface {
+	DeleteAllSessionsForUser(ctx context.Context, userID int64) error
+}
+
+type currentSessionDeleter interface {
+	DeleteSession(ctx context.Context, sessionID []byte) error
 }
 
 type signUpper interface {
@@ -78,10 +82,14 @@ func CreateSignUpHandler(userService signUpper, sessionService sessionCreator) h
 	})
 }
 
-func CreateLoginHandler(userService logInner, sessionService sessionCreator) http.Handler {
+func CreateLoginHandler(userService logInner, sessionService sessionCreator, limiter rateLimiter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqBody, ok := web.DecodeJSONBodyOrWriteError[user.AuthenticateBody](w, r)
 		if !ok {
+			return
+		}
+
+		if limitByField(w, r, limiter, "email", reqBody.Email, logInLimit) {
 			return
 		}
 
@@ -109,59 +117,62 @@ func CreateLoginHandler(userService logInner, sessionService sessionCreator) htt
 	})
 }
 
-func CreateGetUserHandler() http.Handler {
-	return middleware.Requires(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		usr, err := middleware.UserFromRequest(r)
-		if err != nil {
-			log.Printf("when getting user from context for get user endpoint: %v", err)
-			web.WriteAndReportInternalError(w)
-			return
+func CreateLogoutHandler(service currentSessionDeleter) http.Handler {
+	return middleware.WithUser(func(w http.ResponseWriter, r *http.Request, usr user.User, sess session.Session) {
+		if err := service.DeleteSession(r.Context(), sess.DBSession().ID); err != nil {
+			log.Printf("Error when deleting session: %v", err)
 		}
+		web.ClearSessionCookie(w)
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
 
+func CreateGetUserHandler() http.Handler {
+	return middleware.WithUser(func(w http.ResponseWriter, r *http.Request, usr user.User, sess session.Session) {
 		web.WriteJSONResponse(w, http.StatusOK, map[string]any{
 			"id":    usr.DBUser().ID,
 			"email": usr.DBUser().Email,
 		})
-	}), middleware.Authenticated)
+	})
 }
 
-func CreateAuthenticatedPasswordResetHandler(userService authenticatedPasswordResetter, sessionService sessionDeactivator) http.Handler {
-	return middleware.Requires(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			reqBody, ok := web.DecodeJSONBodyOrWriteError[user.AuthenticatedPasswordResetBody](w, r)
-			if !ok {
+func CreateAuthenticatedPasswordResetHandler(userService authenticatedPasswordResetter, sessionService sessionDeleter, limiter rateLimiter) http.Handler {
+	return middleware.WithUser(func(w http.ResponseWriter, r *http.Request, usr user.User, _ session.Session) {
+		if limitByUser(w, r, limiter, usr, authedPasswordResetLimit) {
+			return
+		}
+
+		reqBody, ok := web.DecodeJSONBodyOrWriteError[user.AuthenticatedPasswordResetBody](w, r)
+		if !ok {
+			return
+		}
+
+		err := userService.ResetPasswordForAuthenticatedUser(r.Context(), usr, reqBody)
+		if err != nil {
+			if writeAuthenticatedPasswordResetError(w, err) {
 				return
 			}
+			web.WriteAndReportInternalError(w)
+			return
+		}
 
-			usr, err := middleware.UserFromRequest(r)
-			if err != nil {
-				log.Printf("when getting user for authenticated password reset: %v", err)
-				web.WriteAndReportInternalError(w)
-				return
-			}
+		if err := sessionService.DeleteAllSessionsForUser(r.Context(), usr.DBUser().ID); err != nil {
+			log.Printf("deleting all sessions during authenticated password reset: %v", err)
+		}
 
-			err = userService.ResetPasswordForAuthenticatedUser(r.Context(), usr, reqBody)
-			if err != nil {
-				if writeAuthenticatedPasswordResetError(w, err) {
-					return
-				}
-				web.WriteAndReportInternalError(w)
-				return
-			}
-
-			if err := sessionService.DeactivateAllSessionsForUser(r.Context(), usr.DBUser().ID); err != nil {
-				log.Printf("deactivating all sessions during authenticated password reset: %v", err)
-			}
-
-			web.ClearSessionCookie(w)
-			w.WriteHeader(http.StatusNoContent)
-		}), middleware.Authenticated)
+		web.ClearSessionCookie(w)
+		w.WriteHeader(http.StatusNoContent)
+	})
 }
 
-func CreatePasswordResetRequestHandler(userService passwordResetRequester) http.Handler {
+func CreatePasswordResetRequestHandler(userService passwordResetRequester, limiter rateLimiter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqBody, ok := web.DecodeJSONBodyOrWriteError[user.CreatePasswordResetRequestBody](w, r)
 		if !ok {
+			return
+		}
+
+		if limitByField(w, r, limiter, "email", reqBody.Email, passwordResetRequestLimit) {
 			return
 		}
 
@@ -179,9 +190,9 @@ func CreatePasswordResetRequestHandler(userService passwordResetRequester) http.
 	})
 }
 
-func CreateTokenPasswordResetHandler(userService tokenPasswordResetter, sessionService sessionDeactivator) http.Handler {
+func CreateTokenPasswordResetHandler(userService tokenPasswordResetter, sessionService sessionDeleter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := r.URL.Query().Get("token")
+		token := r.URL.Query().Get("token") // WAF should rate limit by ip as to limit enumeration
 
 		reqBody, ok := web.DecodeJSONBodyOrWriteError[user.ResetPasswordFromResetRequestBody](w, r)
 		if !ok {
@@ -198,44 +209,41 @@ func CreateTokenPasswordResetHandler(userService tokenPasswordResetter, sessionS
 			return
 		}
 
-		if err := sessionService.DeactivateAllSessionsForUser(r.Context(), userID); err != nil {
-			log.Printf("deactivating all sessions during reset from token: %v", err)
+		if err := sessionService.DeleteAllSessionsForUser(r.Context(), userID); err != nil {
+			log.Printf("deleting all sessions during reset from token: %v", err)
 		}
 
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
 
-func CreateEmailResetRequestHandler(userService emailResetRequester) http.Handler {
-	return middleware.Requires(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			reqBody, ok := web.DecodeJSONBodyOrWriteError[user.CreateEmailResetRequestBody](w, r)
-			if !ok {
+func CreateEmailResetRequestHandler(userService emailResetRequester, limiter rateLimiter) http.Handler {
+	return middleware.WithUser(func(w http.ResponseWriter, r *http.Request, usr user.User, sess session.Session) {
+
+		if limitByUser(w, r, limiter, usr, emailResetRequestLimit) {
+			return
+		}
+
+		reqBody, ok := web.DecodeJSONBodyOrWriteError[user.CreateEmailResetRequestBody](w, r)
+		if !ok {
+			return
+		}
+
+		err := userService.CreateEmailResetRequest(r.Context(), usr, reqBody)
+		if err != nil {
+			if writeCreateEmailResetRequestError(w, err) {
 				return
 			}
 
-			usr, err := middleware.UserFromRequest(r)
-			if err != nil {
-				log.Printf("when getting user for email reset request: %v", err)
-				web.WriteAndReportInternalError(w)
-				return
-			}
+			web.WriteAndReportInternalError(w)
+			return
+		}
 
-			err = userService.CreateEmailResetRequest(r.Context(), usr, reqBody)
-			if err != nil {
-				if writeCreateEmailResetRequestError(w, err) {
-					return
-				}
-
-				web.WriteAndReportInternalError(w)
-				return
-			}
-
-			w.WriteHeader(http.StatusNoContent)
-		}), middleware.Authenticated)
+		w.WriteHeader(http.StatusNoContent)
+	})
 }
 
-func CreateTokenEmailResetHandler(userService tokenEmailResetter, sessionService sessionDeactivator) http.Handler {
+func CreateTokenEmailResetHandler(userService tokenEmailResetter, sessionService sessionDeleter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := r.URL.Query().Get("token")
 
@@ -249,8 +257,8 @@ func CreateTokenEmailResetHandler(userService tokenEmailResetter, sessionService
 			return
 		}
 
-		if err := sessionService.DeactivateAllSessionsForUser(r.Context(), userID); err != nil {
-			log.Printf("deactivating all sessions during email reset from token: %v", err)
+		if err := sessionService.DeleteAllSessionsForUser(r.Context(), userID); err != nil {
+			log.Printf("deleting all sessions during email reset from token: %v", err)
 		}
 
 		w.WriteHeader(http.StatusNoContent)
@@ -296,11 +304,6 @@ func writeLogInError(w http.ResponseWriter, err error) bool {
 		return true
 	}
 
-	if errors.Is(err, user.ErrRateLimit) {
-		web.WriteJSONResponse(w, http.StatusTooManyRequests, map[string]any{"error": "try again later"})
-		return true
-	}
-
 	return false
 }
 
@@ -320,11 +323,6 @@ func writeAuthenticatedPasswordResetError(w http.ResponseWriter, err error) bool
 func writeCreatePasswordResetRequestError(w http.ResponseWriter, err error) bool {
 	if errors.Is(err, user.ErrInvalidEmail) {
 		web.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email is not valid"})
-		return true
-	}
-
-	if errors.Is(err, user.ErrRateLimit) {
-		web.WriteJSONResponse(w, http.StatusTooManyRequests, map[string]any{"error": "try again later"})
 		return true
 	}
 
@@ -362,11 +360,6 @@ func writeCreateEmailResetRequestError(w http.ResponseWriter, err error) bool {
 
 	if errors.Is(err, user.ErrInvalidCredentials) {
 		web.WriteJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "authentication failed"})
-		return true
-	}
-
-	if errors.Is(err, user.ErrRateLimit) {
-		web.WriteJSONResponse(w, http.StatusTooManyRequests, map[string]any{"error": "try again later"})
 		return true
 	}
 

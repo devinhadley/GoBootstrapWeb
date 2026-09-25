@@ -1,10 +1,14 @@
 module devinhadley/gobootstrapweb
 
-go 1.25.9
+go 1.26.0
 
 require (
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/matthewhartstonge/argon2 v1.5.1
+	github.com/pressly/goose/v3 v3.27.1
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
+	golang.org/x/time v0.16.0
 )
 
 require (
@@ -48,13 +52,11 @@ require (
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
-	github.com/pressly/goose/v3 v3.27.1 // indirect
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.3 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/testcontainers/testcontainers-go v0.42.0 // indirect
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.16 // indirect
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect

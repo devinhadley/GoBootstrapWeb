@@ -3,7 +3,6 @@ package middleware // Middlware runs on every request, before the handler that f
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"log"
 	"net/http"
 
@@ -16,16 +15,22 @@ type contextKey struct {
 	name string
 }
 
-var (
-	getUserContextKey   = &contextKey{"get-user"}
-	ErrUserNotInContext = errors.New("user not found in request context")
-)
+var userContextKey = &contextKey{"user"}
 
-type GetUserFunc func() (user.User, error)
+// getUserFunc fetches the session's user on demand, using the caller's context.
+// Only requests that actually resolve a user (via WithUser) query for it.
+type getUserFunc func(ctx context.Context) (user.User, error)
+
+// sessionAndUser is what CreateSessionMiddleware stores in context: the current
+// session, resolved eagerly, and a way to fetch the user, resolved on demand.
+type sessionAndUser struct {
+	session session.Session
+	getUser getUserFunc
+}
 
 type sessionMiddlewareService interface {
 	GetSession(ctx context.Context, sessionID []byte) (session.Session, error)
-	ExpireSession(ctx context.Context, sessionID []byte) error
+	DeleteSession(ctx context.Context, sessionID []byte) error
 	RotateSession(ctx context.Context, sessionID []byte) (session.Session, error)
 	UpdateLastSeen(ctx context.Context, session session.Session) error
 }
@@ -34,22 +39,25 @@ type userGetter interface {
 	GetUserByID(ctx context.Context, id int64) (user.User, error)
 }
 
-func withGetUser(ctx context.Context, getUser GetUserFunc) context.Context {
-	return context.WithValue(ctx, getUserContextKey, getUser)
-}
+type AuthenticatedHandlerFunc func(w http.ResponseWriter, r *http.Request, usr user.User, sess session.Session)
 
-func UserFromRequest(r *http.Request) (user.User, error) {
-	getUser, ok := r.Context().Value(getUserContextKey).(GetUserFunc)
-	if !ok {
-		return user.User{}, ErrUserNotInContext
-	}
+func WithUser(next AuthenticatedHandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		su, ok := r.Context().Value(userContextKey).(sessionAndUser)
+		if !ok {
+			web.WriteJSONResponse(w, http.StatusUnauthorized, map[string]any{})
+			return
+		}
 
-	return getUser()
-}
+		usr, err := su.getUser(r.Context())
+		if err != nil {
+			log.Printf("resolving user: %v", err)
+			web.WriteAndReportInternalError(w)
+			return
+		}
 
-func isUserInRequest(r *http.Request) bool {
-	_, ok := r.Context().Value(getUserContextKey).(GetUserFunc)
-	return ok
+		next(w, r, usr, su.session)
+	})
 }
 
 // CreateSessionMiddleware creates an http handler which uses the id (session id) cookie to expire sessions, rotate sessions, and authenticate the user.
@@ -88,9 +96,9 @@ func CreateSessionMiddleware(userService userGetter, sessionService sessionMiddl
 		}
 
 		if curSession.IsExpired() {
-			err = sessionService.ExpireSession(r.Context(), curSession.DBSession().ID)
+			err = sessionService.DeleteSession(r.Context(), curSession.DBSession().ID)
 			if err != nil {
-				log.Printf("Error when expiring session: %v", err)
+				log.Printf("Error when deleting session: %v", err)
 			}
 			web.ClearSessionCookie(w)
 			next.ServeHTTP(w, r)
@@ -112,38 +120,18 @@ func CreateSessionMiddleware(userService userGetter, sessionService sessionMiddl
 			log.Printf("Error when updating last seen for session: %v", err)
 		}
 
-		// Add a closure to the context which allows lazy fetch of the current user.
 		// Note that get session only includes sessions for a user that is active.
-		// That is, an in active user will never be added to context.
-		requestCtx := r.Context()
-		ctx := withGetUser(requestCtx, createGetUserFunc(curSession.DBSession().UserID, userService, requestCtx))
-		r = r.WithContext(ctx)
+		// That is, an inactive user will never be added to context.
+		userID := curSession.DBSession().UserID
+		var getUser getUserFunc = func(ctx context.Context) (user.User, error) {
+			return userService.GetUserByID(ctx, userID)
+		}
+
+		r = r.WithContext(context.WithValue(r.Context(), userContextKey, sessionAndUser{
+			session: curSession,
+			getUser: getUser,
+		}))
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-func createGetUserFunc(userID int64, userService userGetter, ctx context.Context) func() (user.User, error) {
-	var currentUser *user.User
-	var fetchCurrentUserError error
-
-	return func() (user.User, error) {
-		if currentUser != nil {
-			return *currentUser, nil
-		}
-
-		if fetchCurrentUserError != nil {
-			return user.User{}, fetchCurrentUserError
-		}
-
-		usr, err := userService.GetUserByID(ctx, userID)
-		if err != nil {
-			fetchCurrentUserError = err
-			return user.User{}, err
-		}
-
-		currentUser = &usr
-
-		return usr, nil
-	}
 }

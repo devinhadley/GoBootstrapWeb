@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"devinhadley/gobootstrapweb/internal/db"
 	"devinhadley/gobootstrapweb/internal/server"
 	"devinhadley/gobootstrapweb/internal/service/email"
+	"devinhadley/gobootstrapweb/internal/service/ratelimit"
 	"devinhadley/gobootstrapweb/internal/service/session"
 	"devinhadley/gobootstrapweb/internal/service/user"
 
@@ -56,6 +58,7 @@ func main() {
 		PasswordResetURL: passwordResetURL,
 		EmailResetURL:    emailResetURL,
 	})
+	limiter := ratelimit.NewInMemoryLimiter(time.Now)
 
-	http.ListenAndServe(":8080", server.NewMux(userService, sessionService))
+	http.ListenAndServe(":8080", server.NewMux(userService, sessionService, limiter))
 }

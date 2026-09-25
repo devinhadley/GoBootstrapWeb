@@ -3,12 +3,12 @@ package session
 import "context"
 
 type MockService struct {
-	CreateSessionFn                func(ctx context.Context, userID int64) (CreateSessionResult, error)
-	GetSessionFn                   func(ctx context.Context, sessionID []byte) (Session, error)
-	ExpireSessionFn                func(ctx context.Context, sessionID []byte) error
-	UpdateLastSeenFn               func(ctx context.Context, s Session) error
-	RotateSessionFn                func(ctx context.Context, sessionID []byte) (Session, error)
-	DeactivateAllSessionsForUserFn func(ctx context.Context, userID int64) error
+	CreateSessionFn            func(ctx context.Context, userID int64) (CreateSessionResult, error)
+	GetSessionFn               func(ctx context.Context, sessionID []byte) (Session, error)
+	DeleteSessionFn            func(ctx context.Context, sessionID []byte) error
+	UpdateLastSeenFn           func(ctx context.Context, s Session) error
+	RotateSessionFn            func(ctx context.Context, sessionID []byte) (Session, error)
+	DeleteAllSessionsForUserFn func(ctx context.Context, userID int64) error
 }
 
 func (s MockService) CreateSession(ctx context.Context, userID int64) (CreateSessionResult, error) {
@@ -27,9 +27,9 @@ func (s MockService) GetSession(ctx context.Context, sessionID []byte) (Session,
 	return Session{}, nil
 }
 
-func (s MockService) ExpireSession(ctx context.Context, sessionID []byte) error {
-	if s.ExpireSessionFn != nil {
-		return s.ExpireSessionFn(ctx, sessionID)
+func (s MockService) DeleteSession(ctx context.Context, sessionID []byte) error {
+	if s.DeleteSessionFn != nil {
+		return s.DeleteSessionFn(ctx, sessionID)
 	}
 
 	return nil
@@ -51,9 +51,9 @@ func (s MockService) RotateSession(ctx context.Context, sessionID []byte) (Sessi
 	return Session{}, nil
 }
 
-func (s MockService) DeactivateAllSessionsForUser(ctx context.Context, userID int64) error {
-	if s.DeactivateAllSessionsForUserFn != nil {
-		return s.DeactivateAllSessionsForUserFn(ctx, userID)
+func (s MockService) DeleteAllSessionsForUser(ctx context.Context, userID int64) error {
+	if s.DeleteAllSessionsForUserFn != nil {
+		return s.DeleteAllSessionsForUserFn(ctx, userID)
 	}
 
 	return nil
