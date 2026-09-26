@@ -58,7 +58,7 @@ func main() {
 		PasswordResetURL: passwordResetURL,
 		EmailResetURL:    emailResetURL,
 	})
-	limiter := ratelimit.NewInMemoryLimiter(time.Now)
+	limiter := ratelimit.NewInMemoryLimiter(time.Now, 100_000)
 
 	http.ListenAndServe(":8080", server.NewMux(userService, sessionService, limiter))
 }
