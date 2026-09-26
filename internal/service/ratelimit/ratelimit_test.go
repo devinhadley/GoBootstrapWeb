@@ -7,7 +7,7 @@ import (
 
 func TestAllowTrueWithinBurst(t *testing.T) {
 	clock := newFakeClock()
-	limiter := NewInMemoryLimiter(clock.Now)
+	limiter := NewInMemoryLimiter(clock.Now, 1000)
 	policy := Policy{Count: 3, Per: time.Minute}
 
 	for i := range 3 {
@@ -23,7 +23,7 @@ func TestAllowTrueWithinBurst(t *testing.T) {
 
 func TestAllowFalseAfterBurstExhausted(t *testing.T) {
 	clock := newFakeClock()
-	limiter := NewInMemoryLimiter(clock.Now)
+	limiter := NewInMemoryLimiter(clock.Now, 1000)
 	policy := Policy{Count: 3, Per: time.Minute}
 
 	for range 3 {
@@ -43,7 +43,7 @@ func TestAllowFalseAfterBurstExhausted(t *testing.T) {
 
 func TestAllowRefillsOverTime(t *testing.T) {
 	clock := newFakeClock()
-	limiter := NewInMemoryLimiter(clock.Now)
+	limiter := NewInMemoryLimiter(clock.Now, 1000)
 	policy := Policy{Count: 3, Per: time.Minute}
 
 	for range 3 {
@@ -77,7 +77,7 @@ func TestAllowRefillsOverTime(t *testing.T) {
 
 func TestAllowKeysAreIndependent(t *testing.T) {
 	clock := newFakeClock()
-	limiter := NewInMemoryLimiter(clock.Now)
+	limiter := NewInMemoryLimiter(clock.Now, 1000)
 	policy := Policy{Count: 1, Per: time.Minute}
 
 	if _, err := limiter.Allow("key-a", policy); err != nil {

@@ -18,7 +18,6 @@ type SessionQueries interface {
 	DeleteLeastRecentlyUsedSessionForUser(ctx context.Context, userID int64) error
 	GetSession(ctx context.Context, id []byte) (db.Session, error)
 	GetSessionCountByUser(ctx context.Context, userID int64) (int64, error)
-	UpdateSessionIDAndRefreshedAt(ctx context.Context, arg db.UpdateSessionIDAndRefreshedAtParams) (db.Session, error)
 	UpdateSessionLastSeenToNow(ctx context.Context, id []byte) (db.Session, error)
 	DeleteSession(ctx context.Context, id []byte) error
 	DeleteAllSessionsForUser(ctx context.Context, userID int64) error
@@ -117,29 +116,6 @@ func (s *Service) UpdateLastSeen(ctx context.Context, session Session) error {
 		}
 	}
 	return nil
-}
-
-func (s *Service) RotateSession(ctx context.Context, sessionID []byte) (Session, error) {
-	rotatedSessionID, err := generateSessionID()
-	if err != nil {
-		return Session{}, err
-	}
-	rotatedSessionIDHash := sha256.Sum256(rotatedSessionID)
-
-	updatedSession, err := s.queries.UpdateSessionIDAndRefreshedAt(ctx, db.UpdateSessionIDAndRefreshedAtParams{
-		ID:   sessionID,
-		ID_2: rotatedSessionIDHash[:],
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Session{}, ErrSessionNotFound
-		}
-
-		return Session{}, fmt.Errorf("rotating session: %w", err)
-	}
-
-	updatedSession.ID = rotatedSessionID
-	return SessionFromDB(updatedSession), nil
 }
 
 func (s *Service) DeleteAllSessionsForUser(ctx context.Context, userID int64) error {

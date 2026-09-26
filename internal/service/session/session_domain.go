@@ -22,11 +22,6 @@ func (s Session) DBSession() db.Session {
 	return s.raw
 }
 
-func (s Session) ShouldRotate() bool {
-	rotationRequiredDate := s.raw.LastRefreshedAt.Time.AddDate(0, 0, sessionRotationDays)
-	return rotationRequiredDate.Before(time.Now())
-}
-
 func (s Session) IsExpired() bool {
 	now := time.Now()
 	absoluteExpirationDate := s.GetAbsoluteExpiration()
@@ -45,6 +40,5 @@ func (s Session) ShouldUpdateLastSeen() bool {
 const (
 	SessionAbsoluteExpirationDays      = 90
 	sessionIdleExpirationDays          = 14
-	sessionRotationDays                = 7
 	updateLastSeenAfterDurationMinutes = 20
 )

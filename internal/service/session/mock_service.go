@@ -7,7 +7,6 @@ type MockService struct {
 	GetSessionFn               func(ctx context.Context, sessionID []byte) (Session, error)
 	DeleteSessionFn            func(ctx context.Context, sessionID []byte) error
 	UpdateLastSeenFn           func(ctx context.Context, s Session) error
-	RotateSessionFn            func(ctx context.Context, sessionID []byte) (Session, error)
 	DeleteAllSessionsForUserFn func(ctx context.Context, userID int64) error
 }
 
@@ -41,14 +40,6 @@ func (s MockService) UpdateLastSeen(ctx context.Context, curSession Session) err
 	}
 
 	return nil
-}
-
-func (s MockService) RotateSession(ctx context.Context, sessionID []byte) (Session, error) {
-	if s.RotateSessionFn != nil {
-		return s.RotateSessionFn(ctx, sessionID)
-	}
-
-	return Session{}, nil
 }
 
 func (s MockService) DeleteAllSessionsForUser(ctx context.Context, userID int64) error {

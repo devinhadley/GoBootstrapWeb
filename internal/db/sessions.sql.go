@@ -17,7 +17,7 @@ INSERT INTO sessions (
     $1,
     $2
 )
-RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at
+RETURNING id, user_id, created_at, last_seen_at
 `
 
 type CreateSessionParams struct {
@@ -33,7 +33,6 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.UserID,
 		&i.CreatedAt,
 		&i.LastSeenAt,
-		&i.LastRefreshedAt,
 	)
 	return i, err
 }
@@ -75,7 +74,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id []byte) error {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT s.id, s.user_id, s.created_at, s.last_seen_at, s.last_refreshed_at
+SELECT s.id, s.user_id, s.created_at, s.last_seen_at
 FROM sessions s
 JOIN users u on s.user_id = u.id 
 WHERE s.id = $1 AND u.is_active = TRUE
@@ -89,7 +88,6 @@ func (q *Queries) GetSession(ctx context.Context, id []byte) (Session, error) {
 		&i.UserID,
 		&i.CreatedAt,
 		&i.LastSeenAt,
-		&i.LastRefreshedAt,
 	)
 	return i, err
 }
@@ -107,36 +105,11 @@ func (q *Queries) GetSessionCountByUser(ctx context.Context, userID int64) (int6
 	return count, err
 }
 
-const updateSessionIDAndRefreshedAt = `-- name: UpdateSessionIDAndRefreshedAt :one
-UPDATE sessions
-SET id = $2, last_refreshed_at = NOW()
-WHERE id = $1
-RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at
-`
-
-type UpdateSessionIDAndRefreshedAtParams struct {
-	ID   []byte
-	ID_2 []byte
-}
-
-func (q *Queries) UpdateSessionIDAndRefreshedAt(ctx context.Context, arg UpdateSessionIDAndRefreshedAtParams) (Session, error) {
-	row := q.db.QueryRow(ctx, updateSessionIDAndRefreshedAt, arg.ID, arg.ID_2)
-	var i Session
-	err := row.Scan(
-		&i.ID,
-		&i.UserID,
-		&i.CreatedAt,
-		&i.LastSeenAt,
-		&i.LastRefreshedAt,
-	)
-	return i, err
-}
-
 const updateSessionLastSeenToNow = `-- name: UpdateSessionLastSeenToNow :one
 UPDATE sessions
 SET last_seen_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, created_at, last_seen_at, last_refreshed_at
+RETURNING id, user_id, created_at, last_seen_at
 `
 
 func (q *Queries) UpdateSessionLastSeenToNow(ctx context.Context, id []byte) (Session, error) {
@@ -147,7 +120,6 @@ func (q *Queries) UpdateSessionLastSeenToNow(ctx context.Context, id []byte) (Se
 		&i.UserID,
 		&i.CreatedAt,
 		&i.LastSeenAt,
-		&i.LastRefreshedAt,
 	)
 	return i, err
 }

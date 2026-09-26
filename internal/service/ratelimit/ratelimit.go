@@ -21,9 +21,6 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// numKeys is the number of keys in the LRU before eviction kicks in.
-const numKeys = 1000
-
 // evictionWarnInterval throttles the eviction warning so a thrashing cache
 // can't flood the logs.
 const evictionWarnInterval = 30 * time.Second
@@ -40,7 +37,7 @@ type InMemoryLimiter struct {
 	now      func() time.Time
 }
 
-func NewInMemoryLimiter(now func() time.Time) *InMemoryLimiter {
+func NewInMemoryLimiter(now func() time.Time, size int) *InMemoryLimiter {
 	warnEvict := createThrottle(evictionWarnInterval, now)
 
 	onEvict := func(key string, limiter *rate.Limiter) {
@@ -52,11 +49,11 @@ func NewInMemoryLimiter(now func() time.Time) *InMemoryLimiter {
 		// Rate limits exist to track spent tokens. If we're losing this insight, we need to right size the store...
 		warnEvict(func() {
 			log.Printf("ratelimit: WARNING evicted %q with %.1f/%d tokens left; LRU of %d keys may be undersized",
-				key, tokens, limiter.Burst(), numKeys)
+				key, tokens, limiter.Burst(), size)
 		})
 	}
 
-	entries, err := lru.NewWithEvict(numKeys, onEvict)
+	entries, err := lru.NewWithEvict(size, onEvict)
 	if err != nil {
 		panic(err) // Initialized at application startup, so a fine panic.
 	}
