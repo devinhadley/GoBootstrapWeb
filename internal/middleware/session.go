@@ -31,7 +31,6 @@ type sessionAndUser struct {
 type sessionMiddlewareService interface {
 	GetSession(ctx context.Context, sessionID []byte) (session.Session, error)
 	DeleteSession(ctx context.Context, sessionID []byte) error
-	RotateSession(ctx context.Context, sessionID []byte) (session.Session, error)
 	UpdateLastSeen(ctx context.Context, session session.Session) error
 }
 
@@ -60,7 +59,7 @@ func WithUser(next AuthenticatedHandlerFunc) http.Handler {
 	})
 }
 
-// CreateSessionMiddleware creates an http handler which uses the id (session id) cookie to expire sessions, rotate sessions, and authenticate the user.
+// CreateSessionMiddleware creates an http handler which uses the id (session id) cookie to expire sessions and authenticate the user.
 func CreateSessionMiddleware(userService userGetter, sessionService sessionMiddlewareService, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sessionCookie, err := r.Cookie("id")
@@ -103,16 +102,6 @@ func CreateSessionMiddleware(userService userGetter, sessionService sessionMiddl
 			web.ClearSessionCookie(w)
 			next.ServeHTTP(w, r)
 			return
-		}
-
-		if curSession.ShouldRotate() {
-			rotatedSession, err := sessionService.RotateSession(r.Context(), curSession.DBSession().ID)
-			if err != nil {
-				log.Printf("Error when rotating session: %v", err)
-			} else {
-				curSession = rotatedSession
-				web.AddSessionToCookie(w, curSession.DBSession().ID, curSession.GetAbsoluteExpiration())
-			}
 		}
 
 		err = sessionService.UpdateLastSeen(r.Context(), curSession)

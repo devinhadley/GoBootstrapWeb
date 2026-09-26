@@ -1373,7 +1373,7 @@ func setupUserIntegrationDeps(t *testing.T) userIntegrationDeps {
 		EmailResetURL:    "http://example.com/email-reset",
 	})
 	clock := newFakeClock()
-	limiter := ratelimit.NewInMemoryLimiter(clock.Now)
+	limiter := ratelimit.NewInMemoryLimiter(clock.Now, 100_000)
 
 	handler := server.NewMux(userService, sessionService, limiter)
 

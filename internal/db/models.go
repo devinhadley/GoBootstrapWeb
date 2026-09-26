@@ -22,11 +22,10 @@ type PasswordResetRequest struct {
 }
 
 type Session struct {
-	ID              []byte
-	UserID          int64
-	CreatedAt       pgtype.Timestamptz
-	LastSeenAt      pgtype.Timestamptz
-	LastRefreshedAt pgtype.Timestamptz
+	ID         []byte
+	UserID     int64
+	CreatedAt  pgtype.Timestamptz
+	LastSeenAt pgtype.Timestamptz
 }
 
 type User struct {

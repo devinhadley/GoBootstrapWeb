@@ -23,12 +23,6 @@ SELECT COUNT(*)
 FROM sessions
 WHERE user_id = $1;
 
--- name: UpdateSessionIDAndRefreshedAt :one
-UPDATE sessions
-SET id = $2, last_refreshed_at = NOW()
-WHERE id = $1
-RETURNING *;
-
 -- name: UpdateSessionLastSeenToNow :one
 UPDATE sessions
 SET last_seen_at = NOW()
