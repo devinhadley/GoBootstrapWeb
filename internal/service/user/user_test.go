@@ -14,7 +14,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/matthewhartstonge/argon2"
 )
 
 func TestSignUp(t *testing.T) {
@@ -415,7 +414,7 @@ func testCreateEmailResetRequestPropagatesUnexpectedGetUserByEmailError(t *testi
 
 func hashPassword(t *testing.T, password string) string {
 	t.Helper()
-	argon := argon2.MemoryConstrainedDefaults()
+	argon := passwordHashConfig
 	hash, err := argon.HashEncoded([]byte(password))
 	if err != nil {
 		t.Fatalf("HashEncoded returned error: %v", err)

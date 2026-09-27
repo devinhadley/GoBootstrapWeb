@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/mail"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -66,11 +67,12 @@ type UserQueries interface {
 }
 
 type Service struct {
-	queries         UserQueries
-	runWithTx       RunUserQueriesInTxFn
-	commonPasswords commonPasswords
-	config          Config
-	emailService    email.Service
+	queries           UserQueries
+	runWithTx         RunUserQueriesInTxFn
+	commonPasswords   commonPasswords
+	config            Config
+	emailService      email.Service
+	concurrentSignUps atomic.Int32 // Argon is expensive, restrict the number of concurrent sign ups as to not degrade memory.
 }
 
 type AuthenticateBody struct {
@@ -528,8 +530,19 @@ func normalizeAndValidateEmail(input string) (string, bool) {
 	return normalized, true
 }
 
+// OWASP's minimum recommended argon2id configuration.
+var passwordHashConfig = argon2.Config{
+	HashLength:  32,
+	SaltLength:  16,
+	TimeCost:    2,
+	MemoryCost:  19 * 1024, // KiB
+	Parallelism: 1,
+	Mode:        argon2.ModeArgon2id,
+	Version:     argon2.Version13,
+}
+
 func createPasswordHash(password string) ([]byte, error) {
-	argon := argon2.MemoryConstrainedDefaults()
+	argon := passwordHashConfig
 
 	passwordHash, err := argon.HashEncoded([]byte(password))
 	if err != nil {
