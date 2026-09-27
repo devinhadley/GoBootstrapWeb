@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -20,32 +20,32 @@ func TestMain(m *testing.M) {
 
 	container, dsn, err := startIntegrationPostgres(ctx)
 	if err != nil {
-		log.Printf("failed to start postgres test container: %v", err)
+		slog.Error("failed to start postgres test container", "err", err)
 		os.Exit(1)
 	}
 
 	defer func() {
 		if terminateErr := container.Terminate(ctx); terminateErr != nil {
-			log.Printf("failed to terminate postgres test container: %v", terminateErr)
+			slog.Error("failed to terminate postgres test container", "err", terminateErr)
 		}
 	}()
 
 	integrationTestDSN = dsn
 
 	if err := runGooseMigrations(ctx, dsn); err != nil {
-		log.Printf("failed to run goose migrations: %v", err)
+		slog.Error("failed to run goose migrations", "err", err)
 		os.Exit(1)
 	}
 
 	integrationTestPool, err = pgxpool.New(ctx, dsn)
 	if err != nil {
-		log.Printf("failed to create integration pgx pool: %v", err)
+		slog.Error("failed to create integration pgx pool", "err", err)
 		os.Exit(1)
 	}
 
 	if err := integrationTestPool.Ping(ctx); err != nil {
 		integrationTestPool.Close()
-		log.Printf("failed to ping integration pgx pool: %v", err)
+		slog.Error("failed to ping integration pgx pool", "err", err)
 		os.Exit(1)
 	}
 

@@ -296,7 +296,7 @@ func testCantResetPasswordWithExpiredToken(t *testing.T) {
 		},
 	})
 
-	_, err := userService.ResetPasswordFromResetRequest(ctx, encodedToken, ResetPasswordFromResetRequestBody{
+	err := userService.ResetPasswordFromResetRequest(ctx, encodedToken, ResetPasswordFromResetRequestBody{
 		NewPassword: "brand-new-password",
 	})
 	if !errors.Is(err, ErrInvalidResetToken) {
@@ -430,16 +430,16 @@ func setupUserService(t *testing.T, mockedQueries mockQueries) *Service {
 
 func setupUserServiceWithEmail(t *testing.T, mockedQueries mockQueries, mockedEmailService email.MockEmailService, passwordResetURL string) *Service {
 	t.Helper()
-	runWithTx := func(ctx context.Context, fn func(q UserQueries) error) error {
-		return fn(&mockedQueries)
+	runWithTx := func(ctx context.Context, fn func(q UserQueries, sessions SessionDeleter) error) error {
+		return fn(&mockedQueries, mockSessionDeleter{})
 	}
 	return NewService(&mockedQueries, runWithTx, mockedEmailService, Config{PasswordResetURL: passwordResetURL})
 }
 
 func setupUserServiceWithEmailReset(t *testing.T, mockedQueries mockQueries, mockedEmailService email.MockEmailService, emailResetURL string) *Service {
 	t.Helper()
-	runWithTx := func(ctx context.Context, fn func(q UserQueries) error) error {
-		return fn(&mockedQueries)
+	runWithTx := func(ctx context.Context, fn func(q UserQueries, sessions SessionDeleter) error) error {
+		return fn(&mockedQueries, mockSessionDeleter{})
 	}
 	return NewService(&mockedQueries, runWithTx, mockedEmailService, Config{EmailResetURL: emailResetURL})
 }
@@ -535,5 +535,11 @@ func (q *mockQueries) UpdateEmail(ctx context.Context, arg db.UpdateEmailParams)
 		return q.UpdateEmailFn(ctx, arg)
 	}
 
+	return nil
+}
+
+type mockSessionDeleter struct{}
+
+func (mockSessionDeleter) DeleteAllSessionsForUser(context.Context, int64) error {
 	return nil
 }

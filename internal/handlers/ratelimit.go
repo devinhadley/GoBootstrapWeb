@@ -2,7 +2,7 @@ package handlers // handlers are responsible for http endpoints and http related
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -22,7 +22,7 @@ var (
 	authedPasswordResetLimit  = ratelimit.Policy{Count: 5, Per: 1 * time.Hour}
 )
 
-// Conveinence wrappers for per handler rate limiting...
+// Convenience wrappers for per handler rate limiting...
 
 func limitByUser(w http.ResponseWriter, r *http.Request, limiter rateLimiter, usr user.User, p ratelimit.Policy) bool {
 	key := fmt.Sprintf("%v:user:%v", r.Pattern, usr.DBUser().ID)
@@ -39,7 +39,7 @@ func limitByField(w http.ResponseWriter, r *http.Request, limiter rateLimiter, f
 func limited(w http.ResponseWriter, limiter rateLimiter, key string, p ratelimit.Policy) bool {
 	allowed, err := limiter.Allow(key, p)
 	if err != nil {
-		log.Printf("checking rate limit for key %q: %v", key, err)
+		slog.Error("checking rate limit", "err", err, "key", key)
 	}
 
 	if !allowed {

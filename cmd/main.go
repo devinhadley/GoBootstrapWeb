@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -31,20 +31,26 @@ func getEnvOrPanic(name string) string {
 }
 
 func main() {
+	isProd := strings.ToLower(getEnvOrPanic("IS_PROD")) != "false"
+	if isProd {
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	}
+
 	// Init connection to DB.
 	dsn := getEnvOrPanic("DB_DSN")
 	dbConPool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
-		log.Fatalf("Failed to init database connecton pool %v", err)
+		slog.Error("failed to init database connection pool", "err", err)
+		os.Exit(1)
 	}
 	defer dbConPool.Close()
 
 	queries := db.New(dbConPool)
 
-	isProd := strings.ToLower(getEnvOrPanic("IS_PROD")) != "false"
 	var mailService email.Service
 	if isProd {
-		log.Fatalf("no production email service configured.")
+		slog.Error("no production email service configured")
+		os.Exit(1)
 	} else {
 		mailService = email.MailHogService{}
 	}
@@ -60,5 +66,16 @@ func main() {
 	})
 	limiter := ratelimit.NewInMemoryLimiter(time.Now, 100_000)
 
-	http.ListenAndServe(":8080", server.NewMux(userService, sessionService, limiter))
+	srv := &http.Server{
+		Addr:              ":8080",
+		Handler:           server.NewMux(userService, sessionService, limiter),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	err = srv.ListenAndServe()
+	slog.Error("server stopped", "err", err)
+	os.Exit(1)
 }

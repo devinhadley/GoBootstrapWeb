@@ -8,7 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/mail"
 	"strings"
 	"time"
@@ -29,8 +29,8 @@ var (
 	ErrInvalidEmail       = errors.New("email is not valid")
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrPasswordEmpty      = errors.New("password cannot be empty")
-	ErrPasswordShort      = errors.New("password cannot be empty")
-	ErrPasswordLong       = errors.New("password cannot be empty")
+	ErrPasswordShort      = errors.New("password is too short")
+	ErrPasswordLong       = errors.New("password is too long")
 	ErrPasswordCommon     = errors.New("password is too common")
 	ErrUserNotFound       = errors.New("user not found")
 	ErrInvalidResetToken  = errors.New("invalid or expired reset token")
@@ -208,15 +208,26 @@ func (s *Service) ResetPasswordForAuthenticatedUser(ctx context.Context, usr Use
 		return fmt.Errorf("hashing password during authenticated reset: %w", err)
 	}
 
-	err = s.queries.UpdatePasswordHash(ctx, db.UpdatePasswordHashParams{
-		ID:           usr.DBUser().ID,
-		PasswordHash: string(newPasswordHash),
+	err = s.runWithTx(ctx, func(qWithTx UserQueries, sessionsWithTx SessionDeleter) error {
+		err := qWithTx.UpdatePasswordHash(ctx, db.UpdatePasswordHashParams{
+			ID:           usr.DBUser().ID,
+			PasswordHash: string(newPasswordHash),
+		})
+		if err != nil {
+			return fmt.Errorf("updating password hash during authenticated password reset: %w", err)
+		}
+
+		err = sessionsWithTx.DeleteAllSessionsForUser(ctx, usr.DBUser().ID)
+		if err != nil {
+			return fmt.Errorf("deleting sessions during authenticated password reset: %w", err)
+		}
+
+		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("updating password hash during authenticated password reset: %w", err)
+		return err
 	}
 
-	// TODO: Prevent email service abuse. We should also limit the total # of sucessfull reauthentications.
 	s.emailService.SendMail(
 		usr.DBUser().Email,
 		passwordResetCompleteEmailSubject,
@@ -260,27 +271,26 @@ func (s *Service) CreatePasswordResetRequest(ctx context.Context, reqBody Create
 	urlWithToken := fmt.Sprintf("%v?token=%v", s.config.PasswordResetURL, encodedToken)
 	err = s.emailService.SendMail(email, passwordResetRequestEmailSubject, urlWithToken)
 	if err != nil {
-		return fmt.Errorf("failed to send passwor reset email: %w", err)
+		return fmt.Errorf("failed to send password reset email: %w", err)
 	}
 
 	return nil
 }
 
-func (s *Service) ResetPasswordFromResetRequest(ctx context.Context, token string, input ResetPasswordFromResetRequestBody) (int64, error) {
+func (s *Service) ResetPasswordFromResetRequest(ctx context.Context, token string, input ResetPasswordFromResetRequestBody) error {
 	err := s.isValidPassword(input.NewPassword)
 	if err != nil {
-		return 0, err
+		return err
 	}
 
 	resetToken, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return 0, ErrInvalidResetToken
+		return ErrInvalidResetToken
 	}
 
 	sum := sha256.Sum256(resetToken)
 
-	var userID int64
-	err = s.runWithTx(ctx, func(qWithTx UserQueries) error {
+	return s.runWithTx(ctx, func(qWithTx UserQueries, sessionsWithTx SessionDeleter) error {
 		resetRequest, err := qWithTx.ConsumePasswordResetRequest(ctx, sum[:])
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -310,15 +320,13 @@ func (s *Service) ResetPasswordFromResetRequest(ctx context.Context, token strin
 			return fmt.Errorf("updating password hash during reset from token: %w", err)
 		}
 
-		userID = resetRequest.UserID
+		err = sessionsWithTx.DeleteAllSessionsForUser(ctx, resetRequest.UserID)
+		if err != nil {
+			return fmt.Errorf("deleting sessions during password reset from token: %w", err)
+		}
 
 		return nil
 	})
-	if err != nil {
-		return 0, err
-	}
-
-	return userID, nil
 }
 
 func (s *Service) CreateEmailResetRequest(ctx context.Context, usr User, input CreateEmailResetRequestBody) error {
@@ -375,22 +383,21 @@ func (s *Service) CreateEmailResetRequest(ctx context.Context, usr User, input C
 		emailResetRequestedNotificationBody,
 	)
 	if err != nil {
-		log.Printf("failed to send email reset notification to old address: %v", err)
+		slog.Error("sending email reset notification to old address", "err", err, "user_id", usr.DBUser().ID)
 	}
 
 	return nil
 }
 
-func (s *Service) ResetEmailFromResetRequest(ctx context.Context, token string) (int64, error) {
+func (s *Service) ResetEmailFromResetRequest(ctx context.Context, token string) error {
 	resetToken, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return 0, ErrInvalidResetToken
+		return ErrInvalidResetToken
 	}
 
 	sum := sha256.Sum256(resetToken)
 
-	var userID int64
-	err = s.runWithTx(ctx, func(qWithTx UserQueries) error {
+	return s.runWithTx(ctx, func(qWithTx UserQueries, sessionsWithTx SessionDeleter) error {
 		resetRequest, err := qWithTx.ConsumeEmailResetRequest(ctx, sum[:])
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -419,15 +426,13 @@ func (s *Service) ResetEmailFromResetRequest(ctx context.Context, token string) 
 			return fmt.Errorf("updating email during reset from token: %w", err)
 		}
 
-		userID = resetRequest.UserID
+		err = sessionsWithTx.DeleteAllSessionsForUser(ctx, resetRequest.UserID)
+		if err != nil {
+			return fmt.Errorf("deleting sessions during email reset from token: %w", err)
+		}
 
 		return nil
 	})
-	if err != nil {
-		return 0, err
-	}
-
-	return userID, nil
 }
 
 func (s *Service) GetUserByID(ctx context.Context, id int64) (User, error) {

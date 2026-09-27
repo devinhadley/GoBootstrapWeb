@@ -8,7 +8,7 @@ In other words, developers get core benefits of bulky frameworks like Django for
 
 **Includes:**
 - PostgreSQL connectivity
-- Database migrations with sqlc
+- Database migrations with goose
 - Struct mapping with sqlc
 - Database-backed session authentication
 - HTTP-only cookie sessions

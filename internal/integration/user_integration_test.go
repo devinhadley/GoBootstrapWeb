@@ -284,8 +284,8 @@ func testSignUpRejectsLongPassword(t *testing.T) {
 	assertStatus(t, rec, http.StatusBadRequest)
 
 	gotErr := decodeErrorResponse(t, rec)
-	if gotErr.Password != "password must be 256 charactrs or less" {
-		t.Fatalf("got password error %q, want %q", gotErr.Password, "password must be 256 charactrs or less")
+	if gotErr.Password != "password must be 256 characters or less" {
+		t.Fatalf("got password error %q, want %q", gotErr.Password, "password must be 256 characters or less")
 	}
 
 	userCount := countUsers(t, deps.pool)
@@ -864,7 +864,7 @@ func testCantResetPasswordWithAlreadyUsedToken(t *testing.T) {
 		t.Fatalf("failed to extract reset token from email body %q", deps.emailService.Emails[0].Body)
 	}
 
-	_, err = deps.userService.ResetPasswordFromResetRequest(ctx, resetToken, user.ResetPasswordFromResetRequestBody{
+	err = deps.userService.ResetPasswordFromResetRequest(ctx, resetToken, user.ResetPasswordFromResetRequestBody{
 		NewPassword: firstNewPassword,
 	})
 	if err != nil {
