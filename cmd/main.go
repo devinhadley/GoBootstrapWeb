@@ -61,8 +61,9 @@ func main() {
 
 	sessionService := session.NewService(queries)
 	userService := user.NewService(queries, txnGenerator, mailService, user.Config{
-		PasswordResetURL: passwordResetURL,
-		EmailResetURL:    emailResetURL,
+		PasswordResetURL:    passwordResetURL,
+		EmailResetURL:       emailResetURL,
+		MaxConcurrentHashes: 30,
 	})
 	limiter := ratelimit.NewInMemoryLimiter(time.Now, 100_000)
 

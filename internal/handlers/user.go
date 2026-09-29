@@ -251,6 +251,10 @@ func CreateTokenEmailResetHandler(userService tokenEmailResetter) http.Handler {
 }
 
 func writeSignUpError(w http.ResponseWriter, err error) bool {
+	if writeHashingBusyError(w, err) {
+		return true
+	}
+
 	if errors.Is(err, user.ErrEmailBlank) {
 		web.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email may not be blank"})
 		return true
@@ -274,6 +278,10 @@ func writeSignUpError(w http.ResponseWriter, err error) bool {
 }
 
 func writeLogInError(w http.ResponseWriter, err error) bool {
+	if writeHashingBusyError(w, err) {
+		return true
+	}
+
 	if errors.Is(err, user.ErrInvalidCredentials) {
 		web.WriteJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "authentication failed"})
 		return true
@@ -293,6 +301,10 @@ func writeLogInError(w http.ResponseWriter, err error) bool {
 }
 
 func writeAuthenticatedPasswordResetError(w http.ResponseWriter, err error) bool {
+	if writeHashingBusyError(w, err) {
+		return true
+	}
+
 	if errors.Is(err, user.ErrInvalidCredentials) {
 		web.WriteJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "authentication failed"})
 		return true
@@ -320,6 +332,10 @@ func writeCreatePasswordResetRequestError(w http.ResponseWriter, err error) bool
 }
 
 func writeTokenPasswordResetError(w http.ResponseWriter, err error) bool {
+	if writeHashingBusyError(w, err) {
+		return true
+	}
+
 	if errors.Is(err, user.ErrInvalidResetToken) {
 		web.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid or expired reset token"})
 		return true
@@ -333,6 +349,10 @@ func writeTokenPasswordResetError(w http.ResponseWriter, err error) bool {
 }
 
 func writeCreateEmailResetRequestError(w http.ResponseWriter, err error) bool {
+	if writeHashingBusyError(w, err) {
+		return true
+	}
+
 	if errors.Is(err, user.ErrInvalidEmail) {
 		web.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email is not valid"})
 		return true
@@ -383,6 +403,15 @@ func writeWeakPasswordError(w http.ResponseWriter, err error) bool {
 
 	if errors.Is(err, user.ErrPasswordCommon) {
 		web.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"password": "password too common"})
+		return true
+	}
+
+	return false
+}
+
+func writeHashingBusyError(w http.ResponseWriter, err error) bool {
+	if errors.Is(err, user.ErrHashingBusy) {
+		web.WriteJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "server busy, try again shortly"})
 		return true
 	}
 

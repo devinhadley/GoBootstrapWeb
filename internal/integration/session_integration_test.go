@@ -590,5 +590,5 @@ func getTestDependencies(t *testing.T) sessionIntegrationTestDependencies {
 	txnGenerator := user.CreateUserServiceTxnGenerator(pool, queries)
 	sessionService := session.NewService(queries)
 
-	return sessionIntegrationTestDependencies{queries: *queries, userService: user.NewService(queries, txnGenerator, email.MailHogService{}, user.Config{PasswordResetURL: "http://example.com/password-reset"}), sessionService: *sessionService, pool: pool}
+	return sessionIntegrationTestDependencies{queries: *queries, userService: user.NewService(queries, txnGenerator, email.MailHogService{}, user.Config{PasswordResetURL: "http://example.com/password-reset", MaxConcurrentHashes: 30}), sessionService: *sessionService, pool: pool}
 }

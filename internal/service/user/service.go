@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/mail"
 	"strings"
-	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -21,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/matthewhartstonge/argon2"
+	"golang.org/x/sync/semaphore"
 )
 
 var (
@@ -35,6 +35,7 @@ var (
 	ErrPasswordCommon     = errors.New("password is too common")
 	ErrUserNotFound       = errors.New("user not found")
 	ErrInvalidResetToken  = errors.New("invalid or expired reset token")
+	ErrHashingBusy        = errors.New("too many concurrent password hashes")
 )
 
 const (
@@ -67,12 +68,12 @@ type UserQueries interface {
 }
 
 type Service struct {
-	queries           UserQueries
-	runWithTx         RunUserQueriesInTxFn
-	commonPasswords   commonPasswords
-	config            Config
-	emailService      email.Service
-	concurrentSignUps atomic.Int32 // Argon is expensive, restrict the number of concurrent sign ups as to not degrade memory.
+	queries         UserQueries
+	runWithTx       RunUserQueriesInTxFn
+	commonPasswords commonPasswords
+	config          Config
+	emailService    email.Service
+	hashSlots       *semaphore.Weighted // Argon is expensive, restrict the number of concurrent hashes as to not exhaust memory.
 }
 
 type AuthenticateBody struct {
@@ -99,8 +100,9 @@ type CreateEmailResetRequestBody struct {
 }
 
 type Config struct {
-	PasswordResetURL string
-	EmailResetURL    string
+	PasswordResetURL    string
+	EmailResetURL       string
+	MaxConcurrentHashes int64 // Each hash holds passwordHashConfig.MemoryCost of RAM while it runs.
 }
 
 func NewService(queries UserQueries, runWithTx RunUserQueriesInTxFn, emailService email.Service, config Config) *Service {
@@ -111,12 +113,17 @@ func NewService(queries UserQueries, runWithTx RunUserQueriesInTxFn, emailServic
 		config.EmailResetURL += "/"
 	}
 
+	if config.MaxConcurrentHashes <= 0 {
+		panic("user service: MaxConcurrentHashes must be > 0")
+	}
+
 	return &Service{
 		queries:         queries,
 		runWithTx:       runWithTx,
 		emailService:    emailService,
 		commonPasswords: getCommonPasswords(),
 		config:          config,
+		hashSlots:       semaphore.NewWeighted(config.MaxConcurrentHashes),
 	}
 }
 
@@ -136,7 +143,7 @@ func (s *Service) SignUp(ctx context.Context, input AuthenticateBody) (User, err
 		return User{}, ErrInvalidEmail
 	}
 
-	passwordHash, err := createPasswordHash(input.Password)
+	passwordHash, err := s.createPasswordHash(input.Password)
 	if err != nil {
 		return User{}, fmt.Errorf("when hashing password during sign up: %w", err)
 	}
@@ -183,7 +190,7 @@ func (s *Service) LogIn(ctx context.Context, input AuthenticateBody) (User, erro
 		return User{}, ErrInvalidCredentials
 	}
 
-	ok, err = verifyPassword(input.Password, user.PasswordHash)
+	ok, err = s.verifyPassword(input.Password, user.PasswordHash)
 	if err != nil {
 		return User{}, err
 	}
@@ -205,7 +212,7 @@ func (s *Service) ResetPasswordForAuthenticatedUser(ctx context.Context, usr Use
 		return err
 	}
 
-	newPasswordHash, err := createPasswordHash(input.NewPassword)
+	newPasswordHash, err := s.createPasswordHash(input.NewPassword)
 	if err != nil {
 		return fmt.Errorf("hashing password during authenticated reset: %w", err)
 	}
@@ -309,7 +316,7 @@ func (s *Service) ResetPasswordFromResetRequest(ctx context.Context, token strin
 			return ErrInvalidResetToken
 		}
 
-		newPasswordHash, err := createPasswordHash(input.NewPassword)
+		newPasswordHash, err := s.createPasswordHash(input.NewPassword)
 		if err != nil {
 			return fmt.Errorf("hashing password during reset from token: %w", err)
 		}
@@ -481,7 +488,7 @@ func (s *Service) isValidPassword(password string) error {
 }
 
 func (s *Service) verifyReauthentication(ctx context.Context, usr User, password string) error {
-	ok, err := verifyPassword(password, usr.DBUser().PasswordHash)
+	ok, err := s.verifyPassword(password, usr.DBUser().PasswordHash)
 	if err != nil {
 		return err
 	}
@@ -541,7 +548,13 @@ var passwordHashConfig = argon2.Config{
 	Version:     argon2.Version13,
 }
 
-func createPasswordHash(password string) ([]byte, error) {
+func (s *Service) createPasswordHash(password string) ([]byte, error) {
+	if !s.hashSlots.TryAcquire(1) {
+		slog.Error("password hash slots exhausted, consider increasing MaxConcurrentHashes", "op", "create")
+		return nil, ErrHashingBusy // Ideally this never happens. Fail hard, log, & right size later.
+	}
+	defer s.hashSlots.Release(1)
+
 	argon := passwordHashConfig
 
 	passwordHash, err := argon.HashEncoded([]byte(password))
@@ -552,7 +565,13 @@ func createPasswordHash(password string) ([]byte, error) {
 	return passwordHash, nil
 }
 
-func verifyPassword(password string, encodedHash string) (bool, error) {
+func (s *Service) verifyPassword(password string, encodedHash string) (bool, error) {
+	if !s.hashSlots.TryAcquire(1) {
+		slog.Error("password hash slots exhausted, consider increasing MaxConcurrentHashes", "op", "verify")
+		return false, ErrHashingBusy // Ideally this never happens. Fail hard, log, & right size later.
+	}
+	defer s.hashSlots.Release(1)
+
 	ok, err := argon2.VerifyEncoded([]byte(password), []byte(encodedHash))
 	if err != nil {
 		return false, fmt.Errorf("validating password hash: %w", err)

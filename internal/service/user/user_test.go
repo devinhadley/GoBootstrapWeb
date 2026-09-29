@@ -432,7 +432,7 @@ func setupUserServiceWithEmail(t *testing.T, mockedQueries mockQueries, mockedEm
 	runWithTx := func(ctx context.Context, fn func(q UserQueries, sessions SessionDeleter) error) error {
 		return fn(&mockedQueries, mockSessionDeleter{})
 	}
-	return NewService(&mockedQueries, runWithTx, mockedEmailService, Config{PasswordResetURL: passwordResetURL})
+	return NewService(&mockedQueries, runWithTx, mockedEmailService, Config{PasswordResetURL: passwordResetURL, MaxConcurrentHashes: 30})
 }
 
 func setupUserServiceWithEmailReset(t *testing.T, mockedQueries mockQueries, mockedEmailService email.MockEmailService, emailResetURL string) *Service {
@@ -440,7 +440,7 @@ func setupUserServiceWithEmailReset(t *testing.T, mockedQueries mockQueries, moc
 	runWithTx := func(ctx context.Context, fn func(q UserQueries, sessions SessionDeleter) error) error {
 		return fn(&mockedQueries, mockSessionDeleter{})
 	}
-	return NewService(&mockedQueries, runWithTx, mockedEmailService, Config{EmailResetURL: emailResetURL})
+	return NewService(&mockedQueries, runWithTx, mockedEmailService, Config{EmailResetURL: emailResetURL, MaxConcurrentHashes: 30})
 }
 
 type mockQueries struct {
