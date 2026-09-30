@@ -7,16 +7,12 @@ import (
 	"devinhadley/gobootstrapweb/internal/service/user"
 	"devinhadley/gobootstrapweb/internal/web"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 )
 
 type sessionCreator interface {
 	CreateSession(ctx context.Context, userID int64) (session.CreateSessionResult, error)
-}
-
-type sessionDeleter interface {
-	DeleteAllSessionsForUser(ctx context.Context, userID int64) error
 }
 
 type currentSessionDeleter interface {
@@ -40,7 +36,7 @@ type passwordResetRequester interface {
 }
 
 type tokenPasswordResetter interface {
-	ResetPasswordFromResetRequest(ctx context.Context, token string, input user.ResetPasswordFromResetRequestBody) (int64, error)
+	ResetPasswordFromResetRequest(ctx context.Context, token string, input user.ResetPasswordFromResetRequestBody) error
 }
 
 type emailResetRequester interface {
@@ -48,9 +44,10 @@ type emailResetRequester interface {
 }
 
 type tokenEmailResetter interface {
-	ResetEmailFromResetRequest(ctx context.Context, token string) (int64, error)
+	ResetEmailFromResetRequest(ctx context.Context, token string) error
 }
 
+// TODO: If deployed to production this needs a WAF & a bot protection service like turnstile in front of it.
 func CreateSignUpHandler(userService signUpper, sessionService sessionCreator) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqBody, ok := web.DecodeJSONBodyOrWriteError[user.AuthenticateBody](w, r)
@@ -67,13 +64,13 @@ func CreateSignUpHandler(userService signUpper, sessionService sessionCreator) h
 				return
 			}
 
-			web.WriteAndReportInternalError(w)
+			web.WriteAndReportInternalError(w, err)
 			return
 		}
 
 		newSession, err := sessionService.CreateSession(r.Context(), usr.DBUser().ID)
 		if err != nil {
-			web.WriteAndReportInternalError(w)
+			web.WriteAndReportInternalError(w, err)
 			return
 		}
 		web.AddSessionToCookie(w, newSession.RawID, newSession.Session.GetAbsoluteExpiration())
@@ -102,13 +99,13 @@ func CreateLoginHandler(userService logInner, sessionService sessionCreator, lim
 				return
 			}
 
-			web.WriteAndReportInternalError(w)
+			web.WriteAndReportInternalError(w, err)
 			return
 		}
 
 		newSession, err := sessionService.CreateSession(r.Context(), usr.DBUser().ID)
 		if err != nil {
-			web.WriteAndReportInternalError(w)
+			web.WriteAndReportInternalError(w, err)
 			return
 		}
 		web.AddSessionToCookie(w, newSession.RawID, newSession.Session.GetAbsoluteExpiration())
@@ -120,7 +117,7 @@ func CreateLoginHandler(userService logInner, sessionService sessionCreator, lim
 func CreateLogoutHandler(service currentSessionDeleter) http.Handler {
 	return middleware.WithUser(func(w http.ResponseWriter, r *http.Request, usr user.User, sess session.Session) {
 		if err := service.DeleteSession(r.Context(), sess.DBSession().ID); err != nil {
-			log.Printf("Error when deleting session: %v", err)
+			slog.Error("deleting session during logout", "err", err)
 		}
 		web.ClearSessionCookie(w)
 		w.WriteHeader(http.StatusNoContent)
@@ -136,7 +133,7 @@ func CreateGetUserHandler() http.Handler {
 	})
 }
 
-func CreateAuthenticatedPasswordResetHandler(userService authenticatedPasswordResetter, sessionService sessionDeleter, limiter rateLimiter) http.Handler {
+func CreateAuthenticatedPasswordResetHandler(userService authenticatedPasswordResetter, limiter rateLimiter) http.Handler {
 	return middleware.WithUser(func(w http.ResponseWriter, r *http.Request, usr user.User, _ session.Session) {
 		if limitByUser(w, r, limiter, usr, authedPasswordResetLimit) {
 			return
@@ -152,12 +149,8 @@ func CreateAuthenticatedPasswordResetHandler(userService authenticatedPasswordRe
 			if writeAuthenticatedPasswordResetError(w, err) {
 				return
 			}
-			web.WriteAndReportInternalError(w)
+			web.WriteAndReportInternalError(w, err)
 			return
-		}
-
-		if err := sessionService.DeleteAllSessionsForUser(r.Context(), usr.DBUser().ID); err != nil {
-			log.Printf("deleting all sessions during authenticated password reset: %v", err)
 		}
 
 		web.ClearSessionCookie(w)
@@ -182,7 +175,7 @@ func CreatePasswordResetRequestHandler(userService passwordResetRequester, limit
 				return
 			}
 
-			web.WriteAndReportInternalError(w)
+			web.WriteAndReportInternalError(w, err)
 			return
 		}
 
@@ -190,7 +183,7 @@ func CreatePasswordResetRequestHandler(userService passwordResetRequester, limit
 	})
 }
 
-func CreateTokenPasswordResetHandler(userService tokenPasswordResetter, sessionService sessionDeleter) http.Handler {
+func CreateTokenPasswordResetHandler(userService tokenPasswordResetter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := r.URL.Query().Get("token") // WAF should rate limit by ip as to limit enumeration
 
@@ -199,18 +192,14 @@ func CreateTokenPasswordResetHandler(userService tokenPasswordResetter, sessionS
 			return
 		}
 
-		userID, err := userService.ResetPasswordFromResetRequest(r.Context(), token, reqBody)
+		err := userService.ResetPasswordFromResetRequest(r.Context(), token, reqBody)
 		if err != nil {
 			if writeTokenPasswordResetError(w, err) {
 				return
 			}
 
-			web.WriteAndReportInternalError(w)
+			web.WriteAndReportInternalError(w, err)
 			return
-		}
-
-		if err := sessionService.DeleteAllSessionsForUser(r.Context(), userID); err != nil {
-			log.Printf("deleting all sessions during reset from token: %v", err)
 		}
 
 		w.WriteHeader(http.StatusNoContent)
@@ -235,7 +224,7 @@ func CreateEmailResetRequestHandler(userService emailResetRequester, limiter rat
 				return
 			}
 
-			web.WriteAndReportInternalError(w)
+			web.WriteAndReportInternalError(w, err)
 			return
 		}
 
@@ -243,22 +232,18 @@ func CreateEmailResetRequestHandler(userService emailResetRequester, limiter rat
 	})
 }
 
-func CreateTokenEmailResetHandler(userService tokenEmailResetter, sessionService sessionDeleter) http.Handler {
+func CreateTokenEmailResetHandler(userService tokenEmailResetter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := r.URL.Query().Get("token")
 
-		userID, err := userService.ResetEmailFromResetRequest(r.Context(), token)
+		err := userService.ResetEmailFromResetRequest(r.Context(), token)
 		if err != nil {
 			if writeTokenEmailResetError(w, err) {
 				return
 			}
 
-			web.WriteAndReportInternalError(w)
+			web.WriteAndReportInternalError(w, err)
 			return
-		}
-
-		if err := sessionService.DeleteAllSessionsForUser(r.Context(), userID); err != nil {
-			log.Printf("deleting all sessions during email reset from token: %v", err)
 		}
 
 		w.WriteHeader(http.StatusNoContent)
@@ -266,6 +251,10 @@ func CreateTokenEmailResetHandler(userService tokenEmailResetter, sessionService
 }
 
 func writeSignUpError(w http.ResponseWriter, err error) bool {
+	if writeHashingBusyError(w, err) {
+		return true
+	}
+
 	if errors.Is(err, user.ErrEmailBlank) {
 		web.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email may not be blank"})
 		return true
@@ -289,6 +278,10 @@ func writeSignUpError(w http.ResponseWriter, err error) bool {
 }
 
 func writeLogInError(w http.ResponseWriter, err error) bool {
+	if writeHashingBusyError(w, err) {
+		return true
+	}
+
 	if errors.Is(err, user.ErrInvalidCredentials) {
 		web.WriteJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "authentication failed"})
 		return true
@@ -308,6 +301,10 @@ func writeLogInError(w http.ResponseWriter, err error) bool {
 }
 
 func writeAuthenticatedPasswordResetError(w http.ResponseWriter, err error) bool {
+	if writeHashingBusyError(w, err) {
+		return true
+	}
+
 	if errors.Is(err, user.ErrInvalidCredentials) {
 		web.WriteJSONResponse(w, http.StatusUnauthorized, map[string]any{"error": "authentication failed"})
 		return true
@@ -335,6 +332,10 @@ func writeCreatePasswordResetRequestError(w http.ResponseWriter, err error) bool
 }
 
 func writeTokenPasswordResetError(w http.ResponseWriter, err error) bool {
+	if writeHashingBusyError(w, err) {
+		return true
+	}
+
 	if errors.Is(err, user.ErrInvalidResetToken) {
 		web.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid or expired reset token"})
 		return true
@@ -348,6 +349,10 @@ func writeTokenPasswordResetError(w http.ResponseWriter, err error) bool {
 }
 
 func writeCreateEmailResetRequestError(w http.ResponseWriter, err error) bool {
+	if writeHashingBusyError(w, err) {
+		return true
+	}
+
 	if errors.Is(err, user.ErrInvalidEmail) {
 		web.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"email": "email is not valid"})
 		return true
@@ -392,12 +397,21 @@ func writeWeakPasswordError(w http.ResponseWriter, err error) bool {
 	}
 
 	if errors.Is(err, user.ErrPasswordLong) {
-		web.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"password": "password must be 256 charactrs or less"})
+		web.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"password": "password must be 256 characters or less"})
 		return true
 	}
 
 	if errors.Is(err, user.ErrPasswordCommon) {
 		web.WriteJSONResponse(w, http.StatusBadRequest, map[string]any{"password": "password too common"})
+		return true
+	}
+
+	return false
+}
+
+func writeHashingBusyError(w http.ResponseWriter, err error) bool {
+	if errors.Is(err, user.ErrHashingBusy) {
+		web.WriteJSONResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "server busy, try again shortly"})
 		return true
 	}
 

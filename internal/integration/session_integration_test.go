@@ -67,7 +67,7 @@ func testValidSessionAuthenticatesCorrectUser(t *testing.T) {
 		web.WriteJSONResponse(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
-	sessionMiddleware := middleware.CreateSessionMiddleware(&deps.userService, &deps.sessionService, handler)
+	sessionMiddleware := middleware.CreateSessionMiddleware(deps.userService, &deps.sessionService, handler)
 
 	sessionCookie := http.Cookie{
 		Name:     "id",
@@ -110,7 +110,7 @@ func testNoSessionCookieContinuesUnauthenticated(t *testing.T) {
 		web.WriteJSONResponse(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
-	sessionMiddleware := middleware.CreateSessionMiddleware(&deps.userService, &deps.sessionService, handler)
+	sessionMiddleware := middleware.CreateSessionMiddleware(deps.userService, &deps.sessionService, handler)
 
 	res := performJsonRequest(sessionMiddleware, http.MethodGet, "/test", map[string]any{})
 
@@ -134,7 +134,7 @@ func testMalformedSessionCookieContinuesUnauthenticated(t *testing.T) {
 		web.WriteJSONResponse(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
-	sessionMiddleware := middleware.CreateSessionMiddleware(&deps.userService, &deps.sessionService, handler)
+	sessionMiddleware := middleware.CreateSessionMiddleware(deps.userService, &deps.sessionService, handler)
 
 	sessionCookie := http.Cookie{
 		Name:     "id",
@@ -164,7 +164,7 @@ func testSessionIDNotFoundContinuesUnauthenticated(t *testing.T) {
 		web.WriteJSONResponse(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
-	sessionMiddleware := middleware.CreateSessionMiddleware(&deps.userService, &deps.sessionService, handler)
+	sessionMiddleware := middleware.CreateSessionMiddleware(deps.userService, &deps.sessionService, handler)
 
 	sessionCookie := http.Cookie{
 		Name:     "id",
@@ -221,7 +221,7 @@ func testValidSessionButUserInactive(t *testing.T) {
 		web.WriteJSONResponse(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
-	sessionMiddleware := middleware.CreateSessionMiddleware(&deps.userService, &deps.sessionService, handler)
+	sessionMiddleware := middleware.CreateSessionMiddleware(deps.userService, &deps.sessionService, handler)
 
 	sessionCookie := http.Cookie{
 		Name:     "id",
@@ -281,7 +281,7 @@ func testAbsoluteExpiration(t *testing.T) {
 		web.WriteJSONResponse(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
-	sessionMiddleware := middleware.CreateSessionMiddleware(&deps.userService, &deps.sessionService, handler)
+	sessionMiddleware := middleware.CreateSessionMiddleware(deps.userService, &deps.sessionService, handler)
 
 	sessionCookie := http.Cookie{
 		Name:     "id",
@@ -345,7 +345,7 @@ func testIdleExpiration(t *testing.T) {
 		web.WriteJSONResponse(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
-	sessionMiddleware := middleware.CreateSessionMiddleware(&deps.userService, &deps.sessionService, handler)
+	sessionMiddleware := middleware.CreateSessionMiddleware(deps.userService, &deps.sessionService, handler)
 
 	sessionCookie := http.Cookie{
 		Name:     "id",
@@ -458,7 +458,7 @@ func testUpdateLastSeenWhenThresholdReached(t *testing.T) {
 		web.WriteJSONResponse(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
-	sessionMiddleware := middleware.CreateSessionMiddleware(&deps.userService, &deps.sessionService, handler)
+	sessionMiddleware := middleware.CreateSessionMiddleware(deps.userService, &deps.sessionService, handler)
 
 	sessionCookie := http.Cookie{
 		Name:     "id",
@@ -573,7 +573,7 @@ func assertSessionExists(t *testing.T, pool *pgxpool.Pool, sessionId []byte, exp
 }
 
 type sessionIntegrationTestDependencies struct {
-	userService    user.Service
+	userService    *user.Service
 	sessionService session.Service
 	pool           *pgxpool.Pool
 	queries        db.Queries
@@ -590,5 +590,5 @@ func getTestDependencies(t *testing.T) sessionIntegrationTestDependencies {
 	txnGenerator := user.CreateUserServiceTxnGenerator(pool, queries)
 	sessionService := session.NewService(queries)
 
-	return sessionIntegrationTestDependencies{queries: *queries, userService: *user.NewService(queries, txnGenerator, email.MailHogService{}, user.Config{PasswordResetURL: "http://example.com/password-reset"}), sessionService: *sessionService, pool: pool}
+	return sessionIntegrationTestDependencies{queries: *queries, userService: user.NewService(queries, txnGenerator, email.MailHogService{}, user.Config{PasswordResetURL: "http://example.com/password-reset", MaxConcurrentHashes: 30}), sessionService: *sessionService, pool: pool}
 }

@@ -14,7 +14,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/matthewhartstonge/argon2"
 )
 
 func TestSignUp(t *testing.T) {
@@ -296,7 +295,7 @@ func testCantResetPasswordWithExpiredToken(t *testing.T) {
 		},
 	})
 
-	_, err := userService.ResetPasswordFromResetRequest(ctx, encodedToken, ResetPasswordFromResetRequestBody{
+	err := userService.ResetPasswordFromResetRequest(ctx, encodedToken, ResetPasswordFromResetRequestBody{
 		NewPassword: "brand-new-password",
 	})
 	if !errors.Is(err, ErrInvalidResetToken) {
@@ -415,7 +414,7 @@ func testCreateEmailResetRequestPropagatesUnexpectedGetUserByEmailError(t *testi
 
 func hashPassword(t *testing.T, password string) string {
 	t.Helper()
-	argon := argon2.MemoryConstrainedDefaults()
+	argon := passwordHashConfig
 	hash, err := argon.HashEncoded([]byte(password))
 	if err != nil {
 		t.Fatalf("HashEncoded returned error: %v", err)
@@ -430,18 +429,18 @@ func setupUserService(t *testing.T, mockedQueries mockQueries) *Service {
 
 func setupUserServiceWithEmail(t *testing.T, mockedQueries mockQueries, mockedEmailService email.MockEmailService, passwordResetURL string) *Service {
 	t.Helper()
-	runWithTx := func(ctx context.Context, fn func(q UserQueries) error) error {
-		return fn(&mockedQueries)
+	runWithTx := func(ctx context.Context, fn func(q UserQueries, sessions SessionDeleter) error) error {
+		return fn(&mockedQueries, mockSessionDeleter{})
 	}
-	return NewService(&mockedQueries, runWithTx, mockedEmailService, Config{PasswordResetURL: passwordResetURL})
+	return NewService(&mockedQueries, runWithTx, mockedEmailService, Config{PasswordResetURL: passwordResetURL, MaxConcurrentHashes: 30})
 }
 
 func setupUserServiceWithEmailReset(t *testing.T, mockedQueries mockQueries, mockedEmailService email.MockEmailService, emailResetURL string) *Service {
 	t.Helper()
-	runWithTx := func(ctx context.Context, fn func(q UserQueries) error) error {
-		return fn(&mockedQueries)
+	runWithTx := func(ctx context.Context, fn func(q UserQueries, sessions SessionDeleter) error) error {
+		return fn(&mockedQueries, mockSessionDeleter{})
 	}
-	return NewService(&mockedQueries, runWithTx, mockedEmailService, Config{EmailResetURL: emailResetURL})
+	return NewService(&mockedQueries, runWithTx, mockedEmailService, Config{EmailResetURL: emailResetURL, MaxConcurrentHashes: 30})
 }
 
 type mockQueries struct {
@@ -535,5 +534,11 @@ func (q *mockQueries) UpdateEmail(ctx context.Context, arg db.UpdateEmailParams)
 		return q.UpdateEmailFn(ctx, arg)
 	}
 
+	return nil
+}
+
+type mockSessionDeleter struct{}
+
+func (mockSessionDeleter) DeleteAllSessionsForUser(context.Context, int64) error {
 	return nil
 }

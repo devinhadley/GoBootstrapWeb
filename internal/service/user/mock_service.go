@@ -7,7 +7,7 @@ type MockService struct {
 	LogInFn                             func(ctx context.Context, input AuthenticateBody) (User, error)
 	ResetPasswordForAuthenticatedUserFn func(ctx context.Context, usr User, input AuthenticatedPasswordResetBody) error
 	CreatePasswordResetRequestFn        func(ctx context.Context, reqBody CreatePasswordResetRequestBody) error
-	ResetPasswordFromResetRequestFn     func(ctx context.Context, token string, input ResetPasswordFromResetRequestBody) (int64, error)
+	ResetPasswordFromResetRequestFn     func(ctx context.Context, token string, input ResetPasswordFromResetRequestBody) error
 	GetUserByIDFn                       func(ctx context.Context, id int64) (User, error)
 }
 
@@ -43,12 +43,12 @@ func (s MockService) CreatePasswordResetRequest(ctx context.Context, reqBody Cre
 	return nil
 }
 
-func (s MockService) ResetPasswordFromResetRequest(ctx context.Context, token string, input ResetPasswordFromResetRequestBody) (int64, error) {
+func (s MockService) ResetPasswordFromResetRequest(ctx context.Context, token string, input ResetPasswordFromResetRequestBody) error {
 	if s.ResetPasswordFromResetRequestFn != nil {
 		return s.ResetPasswordFromResetRequestFn(ctx, token, input)
 	}
 
-	return 0, nil
+	return nil
 }
 
 func (s MockService) GetUserByID(ctx context.Context, id int64) (User, error) {

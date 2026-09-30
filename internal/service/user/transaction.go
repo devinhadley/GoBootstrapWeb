@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"devinhadley/gobootstrapweb/internal/db"
+	"devinhadley/gobootstrapweb/internal/service/session"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -16,10 +17,14 @@ import (
 // Creates a function which manages creating and tearing down a transaction given some function
 // which performs work on DB with user queries.
 
-type RunUserQueriesInTxFn func(ctx context.Context, fn func(q UserQueries) error) error
+type SessionDeleter interface {
+	DeleteAllSessionsForUser(ctx context.Context, userID int64) error
+}
+
+type RunUserQueriesInTxFn func(ctx context.Context, fn func(q UserQueries, sessions SessionDeleter) error) error
 
 func CreateUserServiceTxnGenerator(dbConPool *pgxpool.Pool, queries *db.Queries) RunUserQueriesInTxFn {
-	return func(ctx context.Context, fn func(q UserQueries) error) error {
+	return func(ctx context.Context, fn func(q UserQueries, sessions SessionDeleter) error) error {
 		tx, err := dbConPool.Begin(ctx)
 		if err != nil {
 			return err
@@ -28,7 +33,7 @@ func CreateUserServiceTxnGenerator(dbConPool *pgxpool.Pool, queries *db.Queries)
 
 		qtx := queries.WithTx(tx)
 
-		err = fn(qtx)
+		err = fn(qtx, session.NewService(qtx))
 		if err != nil {
 			return err
 		}

@@ -1,9 +1,10 @@
-package middleware // Middlware runs on every request, before the handler that fufills the request.
+package middleware // Middleware runs on every request, before the handler that fulfills the request.
 
 import (
 	"context"
 	"encoding/base64"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 
 	"devinhadley/gobootstrapweb/internal/service/session"
@@ -50,8 +51,7 @@ func WithUser(next AuthenticatedHandlerFunc) http.Handler {
 
 		usr, err := su.getUser(r.Context())
 		if err != nil {
-			log.Printf("resolving user: %v", err)
-			web.WriteAndReportInternalError(w)
+			web.WriteAndReportInternalError(w, fmt.Errorf("resolving user: %w", err))
 			return
 		}
 
@@ -68,14 +68,14 @@ func CreateSessionMiddleware(userService userGetter, sessionService sessionMiddl
 				next.ServeHTTP(w, r)
 				return
 			}
-			log.Printf("Error when reading session cookie: %v", err)
+			slog.Error("reading session cookie", "err", err)
 			next.ServeHTTP(w, r)
 			return
 		}
 
 		sessionID, err := base64.StdEncoding.DecodeString(sessionCookie.Value)
 		if err != nil {
-			log.Print("Failed to base64 decode a session id.")
+			slog.Warn("failed to base64 decode session id")
 			web.ClearSessionCookie(w)
 			next.ServeHTTP(w, r)
 			return
@@ -89,7 +89,7 @@ func CreateSessionMiddleware(userService userGetter, sessionService sessionMiddl
 				return
 			}
 
-			log.Printf("Error when fetching session: %v", err)
+			slog.Error("fetching session", "err", err)
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -97,7 +97,7 @@ func CreateSessionMiddleware(userService userGetter, sessionService sessionMiddl
 		if curSession.IsExpired() {
 			err = sessionService.DeleteSession(r.Context(), curSession.DBSession().ID)
 			if err != nil {
-				log.Printf("Error when deleting session: %v", err)
+				slog.Error("deleting expired session", "err", err, "user_id", curSession.DBSession().UserID)
 			}
 			web.ClearSessionCookie(w)
 			next.ServeHTTP(w, r)
@@ -106,12 +106,13 @@ func CreateSessionMiddleware(userService userGetter, sessionService sessionMiddl
 
 		err = sessionService.UpdateLastSeen(r.Context(), curSession)
 		if err != nil {
-			log.Printf("Error when updating last seen for session: %v", err)
+			slog.Error("updating session last seen", "err", err, "user_id", curSession.DBSession().UserID)
 		}
 
 		// Note that get session only includes sessions for a user that is active.
 		// That is, an inactive user will never be added to context.
 		userID := curSession.DBSession().UserID
+		AddLogAttrs(r.Context(), slog.Int64("user_id", userID))
 		var getUser getUserFunc = func(ctx context.Context) (user.User, error) {
 			return userService.GetUserByID(ctx, userID)
 		}

@@ -284,8 +284,8 @@ func testSignUpRejectsLongPassword(t *testing.T) {
 	assertStatus(t, rec, http.StatusBadRequest)
 
 	gotErr := decodeErrorResponse(t, rec)
-	if gotErr.Password != "password must be 256 charactrs or less" {
-		t.Fatalf("got password error %q, want %q", gotErr.Password, "password must be 256 charactrs or less")
+	if gotErr.Password != "password must be 256 characters or less" {
+		t.Fatalf("got password error %q, want %q", gotErr.Password, "password must be 256 characters or less")
 	}
 
 	userCount := countUsers(t, deps.pool)
@@ -864,7 +864,7 @@ func testCantResetPasswordWithAlreadyUsedToken(t *testing.T) {
 		t.Fatalf("failed to extract reset token from email body %q", deps.emailService.Emails[0].Body)
 	}
 
-	_, err = deps.userService.ResetPasswordFromResetRequest(ctx, resetToken, user.ResetPasswordFromResetRequestBody{
+	err = deps.userService.ResetPasswordFromResetRequest(ctx, resetToken, user.ResetPasswordFromResetRequestBody{
 		NewPassword: firstNewPassword,
 	})
 	if err != nil {
@@ -1357,6 +1357,11 @@ func testPasswordResetRequestRateLimitIsCaseInsensitive(t *testing.T) {
 
 func setupUserIntegrationDeps(t *testing.T) userIntegrationDeps {
 	t.Helper()
+	return setupUserIntegrationDepsWithHashLimit(t, 30)
+}
+
+func setupUserIntegrationDepsWithHashLimit(t *testing.T, maxConcurrentHashes int64) userIntegrationDeps {
+	t.Helper()
 
 	pool := getIntegrationTestPool(t)
 
@@ -1369,8 +1374,9 @@ func setupUserIntegrationDeps(t *testing.T) userIntegrationDeps {
 	txnGenerator := user.CreateUserServiceTxnGenerator(pool, queries)
 	sessionService := session.NewService(queries)
 	userService := user.NewService(queries, txnGenerator, sliceEmailService, user.Config{
-		PasswordResetURL: "http://example.com/password-reset",
-		EmailResetURL:    "http://example.com/email-reset",
+		PasswordResetURL:    "http://example.com/password-reset",
+		EmailResetURL:       "http://example.com/email-reset",
+		MaxConcurrentHashes: maxConcurrentHashes,
 	})
 	clock := newFakeClock()
 	limiter := ratelimit.NewInMemoryLimiter(clock.Now, 100_000)

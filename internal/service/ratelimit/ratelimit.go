@@ -13,7 +13,7 @@
 package ratelimit
 
 import (
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -48,8 +48,8 @@ func NewInMemoryLimiter(now func() time.Time, size int) *InMemoryLimiter {
 
 		// Rate limits exist to track spent tokens. If we're losing this insight, we need to right size the store...
 		warnEvict(func() {
-			log.Printf("ratelimit: WARNING evicted %q with %.1f/%d tokens left; LRU of %d keys may be undersized",
-				key, tokens, limiter.Burst(), size)
+			slog.Warn("ratelimit: evicted a key with spent tokens; LRU may be undersized",
+				"key", key, "tokens_left", tokens, "burst", limiter.Burst(), "lru_size", size)
 		})
 	}
 
@@ -89,7 +89,7 @@ func (s *InMemoryLimiter) Allow(key string, p Policy) (bool, error) {
 
 	candidate := rate.NewLimiter(rate.Every(p.Per/time.Duration(p.Count)), p.Count)
 
-	// To add new limiters, key must not already be in the LRU (dont wan't to overwrite anything added after get).
+	// To add new limiters, key must not already be in the LRU (don't want to overwrite anything added after get).
 	// Whether its in there or not could have changed from when we get.
 	existing, ok, _ := s.lruCache.PeekOrAdd(key, candidate)
 

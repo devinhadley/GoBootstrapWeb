@@ -8,7 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/mail"
 	"strings"
 	"time"
@@ -20,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/matthewhartstonge/argon2"
+	"golang.org/x/sync/semaphore"
 )
 
 var (
@@ -29,11 +30,12 @@ var (
 	ErrInvalidEmail       = errors.New("email is not valid")
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrPasswordEmpty      = errors.New("password cannot be empty")
-	ErrPasswordShort      = errors.New("password cannot be empty")
-	ErrPasswordLong       = errors.New("password cannot be empty")
+	ErrPasswordShort      = errors.New("password is too short")
+	ErrPasswordLong       = errors.New("password is too long")
 	ErrPasswordCommon     = errors.New("password is too common")
 	ErrUserNotFound       = errors.New("user not found")
 	ErrInvalidResetToken  = errors.New("invalid or expired reset token")
+	ErrHashingBusy        = errors.New("too many concurrent password hashes")
 )
 
 const (
@@ -71,6 +73,7 @@ type Service struct {
 	commonPasswords commonPasswords
 	config          Config
 	emailService    email.Service
+	hashSlots       *semaphore.Weighted // Argon is expensive, restrict the number of concurrent hashes as to not exhaust memory.
 }
 
 type AuthenticateBody struct {
@@ -97,8 +100,9 @@ type CreateEmailResetRequestBody struct {
 }
 
 type Config struct {
-	PasswordResetURL string
-	EmailResetURL    string
+	PasswordResetURL    string
+	EmailResetURL       string
+	MaxConcurrentHashes int64 // Each hash holds passwordHashConfig.MemoryCost of RAM while it runs.
 }
 
 func NewService(queries UserQueries, runWithTx RunUserQueriesInTxFn, emailService email.Service, config Config) *Service {
@@ -109,12 +113,17 @@ func NewService(queries UserQueries, runWithTx RunUserQueriesInTxFn, emailServic
 		config.EmailResetURL += "/"
 	}
 
+	if config.MaxConcurrentHashes <= 0 {
+		panic("user service: MaxConcurrentHashes must be > 0")
+	}
+
 	return &Service{
 		queries:         queries,
 		runWithTx:       runWithTx,
 		emailService:    emailService,
 		commonPasswords: getCommonPasswords(),
 		config:          config,
+		hashSlots:       semaphore.NewWeighted(config.MaxConcurrentHashes),
 	}
 }
 
@@ -134,7 +143,7 @@ func (s *Service) SignUp(ctx context.Context, input AuthenticateBody) (User, err
 		return User{}, ErrInvalidEmail
 	}
 
-	passwordHash, err := createPasswordHash(input.Password)
+	passwordHash, err := s.createPasswordHash(input.Password)
 	if err != nil {
 		return User{}, fmt.Errorf("when hashing password during sign up: %w", err)
 	}
@@ -181,7 +190,7 @@ func (s *Service) LogIn(ctx context.Context, input AuthenticateBody) (User, erro
 		return User{}, ErrInvalidCredentials
 	}
 
-	ok, err = verifyPassword(input.Password, user.PasswordHash)
+	ok, err = s.verifyPassword(input.Password, user.PasswordHash)
 	if err != nil {
 		return User{}, err
 	}
@@ -203,20 +212,31 @@ func (s *Service) ResetPasswordForAuthenticatedUser(ctx context.Context, usr Use
 		return err
 	}
 
-	newPasswordHash, err := createPasswordHash(input.NewPassword)
+	newPasswordHash, err := s.createPasswordHash(input.NewPassword)
 	if err != nil {
 		return fmt.Errorf("hashing password during authenticated reset: %w", err)
 	}
 
-	err = s.queries.UpdatePasswordHash(ctx, db.UpdatePasswordHashParams{
-		ID:           usr.DBUser().ID,
-		PasswordHash: string(newPasswordHash),
+	err = s.runWithTx(ctx, func(qWithTx UserQueries, sessionsWithTx SessionDeleter) error {
+		err := qWithTx.UpdatePasswordHash(ctx, db.UpdatePasswordHashParams{
+			ID:           usr.DBUser().ID,
+			PasswordHash: string(newPasswordHash),
+		})
+		if err != nil {
+			return fmt.Errorf("updating password hash during authenticated password reset: %w", err)
+		}
+
+		err = sessionsWithTx.DeleteAllSessionsForUser(ctx, usr.DBUser().ID)
+		if err != nil {
+			return fmt.Errorf("deleting sessions during authenticated password reset: %w", err)
+		}
+
+		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("updating password hash during authenticated password reset: %w", err)
+		return err
 	}
 
-	// TODO: Prevent email service abuse. We should also limit the total # of sucessfull reauthentications.
 	s.emailService.SendMail(
 		usr.DBUser().Email,
 		passwordResetCompleteEmailSubject,
@@ -260,27 +280,26 @@ func (s *Service) CreatePasswordResetRequest(ctx context.Context, reqBody Create
 	urlWithToken := fmt.Sprintf("%v?token=%v", s.config.PasswordResetURL, encodedToken)
 	err = s.emailService.SendMail(email, passwordResetRequestEmailSubject, urlWithToken)
 	if err != nil {
-		return fmt.Errorf("failed to send passwor reset email: %w", err)
+		return fmt.Errorf("failed to send password reset email: %w", err)
 	}
 
 	return nil
 }
 
-func (s *Service) ResetPasswordFromResetRequest(ctx context.Context, token string, input ResetPasswordFromResetRequestBody) (int64, error) {
+func (s *Service) ResetPasswordFromResetRequest(ctx context.Context, token string, input ResetPasswordFromResetRequestBody) error {
 	err := s.isValidPassword(input.NewPassword)
 	if err != nil {
-		return 0, err
+		return err
 	}
 
 	resetToken, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return 0, ErrInvalidResetToken
+		return ErrInvalidResetToken
 	}
 
 	sum := sha256.Sum256(resetToken)
 
-	var userID int64
-	err = s.runWithTx(ctx, func(qWithTx UserQueries) error {
+	return s.runWithTx(ctx, func(qWithTx UserQueries, sessionsWithTx SessionDeleter) error {
 		resetRequest, err := qWithTx.ConsumePasswordResetRequest(ctx, sum[:])
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -297,7 +316,7 @@ func (s *Service) ResetPasswordFromResetRequest(ctx context.Context, token strin
 			return ErrInvalidResetToken
 		}
 
-		newPasswordHash, err := createPasswordHash(input.NewPassword)
+		newPasswordHash, err := s.createPasswordHash(input.NewPassword)
 		if err != nil {
 			return fmt.Errorf("hashing password during reset from token: %w", err)
 		}
@@ -310,15 +329,13 @@ func (s *Service) ResetPasswordFromResetRequest(ctx context.Context, token strin
 			return fmt.Errorf("updating password hash during reset from token: %w", err)
 		}
 
-		userID = resetRequest.UserID
+		err = sessionsWithTx.DeleteAllSessionsForUser(ctx, resetRequest.UserID)
+		if err != nil {
+			return fmt.Errorf("deleting sessions during password reset from token: %w", err)
+		}
 
 		return nil
 	})
-	if err != nil {
-		return 0, err
-	}
-
-	return userID, nil
 }
 
 func (s *Service) CreateEmailResetRequest(ctx context.Context, usr User, input CreateEmailResetRequestBody) error {
@@ -375,22 +392,21 @@ func (s *Service) CreateEmailResetRequest(ctx context.Context, usr User, input C
 		emailResetRequestedNotificationBody,
 	)
 	if err != nil {
-		log.Printf("failed to send email reset notification to old address: %v", err)
+		slog.Error("sending email reset notification to old address", "err", err, "user_id", usr.DBUser().ID)
 	}
 
 	return nil
 }
 
-func (s *Service) ResetEmailFromResetRequest(ctx context.Context, token string) (int64, error) {
+func (s *Service) ResetEmailFromResetRequest(ctx context.Context, token string) error {
 	resetToken, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return 0, ErrInvalidResetToken
+		return ErrInvalidResetToken
 	}
 
 	sum := sha256.Sum256(resetToken)
 
-	var userID int64
-	err = s.runWithTx(ctx, func(qWithTx UserQueries) error {
+	return s.runWithTx(ctx, func(qWithTx UserQueries, sessionsWithTx SessionDeleter) error {
 		resetRequest, err := qWithTx.ConsumeEmailResetRequest(ctx, sum[:])
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -419,15 +435,13 @@ func (s *Service) ResetEmailFromResetRequest(ctx context.Context, token string) 
 			return fmt.Errorf("updating email during reset from token: %w", err)
 		}
 
-		userID = resetRequest.UserID
+		err = sessionsWithTx.DeleteAllSessionsForUser(ctx, resetRequest.UserID)
+		if err != nil {
+			return fmt.Errorf("deleting sessions during email reset from token: %w", err)
+		}
 
 		return nil
 	})
-	if err != nil {
-		return 0, err
-	}
-
-	return userID, nil
 }
 
 func (s *Service) GetUserByID(ctx context.Context, id int64) (User, error) {
@@ -474,7 +488,7 @@ func (s *Service) isValidPassword(password string) error {
 }
 
 func (s *Service) verifyReauthentication(ctx context.Context, usr User, password string) error {
-	ok, err := verifyPassword(password, usr.DBUser().PasswordHash)
+	ok, err := s.verifyPassword(password, usr.DBUser().PasswordHash)
 	if err != nil {
 		return err
 	}
@@ -523,8 +537,25 @@ func normalizeAndValidateEmail(input string) (string, bool) {
 	return normalized, true
 }
 
-func createPasswordHash(password string) ([]byte, error) {
-	argon := argon2.MemoryConstrainedDefaults()
+// OWASP's minimum recommended argon2id configuration.
+var passwordHashConfig = argon2.Config{
+	HashLength:  32,
+	SaltLength:  16,
+	TimeCost:    2,
+	MemoryCost:  19 * 1024, // KiB
+	Parallelism: 1,
+	Mode:        argon2.ModeArgon2id,
+	Version:     argon2.Version13,
+}
+
+func (s *Service) createPasswordHash(password string) ([]byte, error) {
+	if !s.hashSlots.TryAcquire(1) {
+		slog.Error("password hash slots exhausted, consider increasing MaxConcurrentHashes", "op", "create")
+		return nil, ErrHashingBusy // Ideally this never happens. Fail hard, log, & right size later.
+	}
+	defer s.hashSlots.Release(1)
+
+	argon := passwordHashConfig
 
 	passwordHash, err := argon.HashEncoded([]byte(password))
 	if err != nil {
@@ -534,7 +565,13 @@ func createPasswordHash(password string) ([]byte, error) {
 	return passwordHash, nil
 }
 
-func verifyPassword(password string, encodedHash string) (bool, error) {
+func (s *Service) verifyPassword(password string, encodedHash string) (bool, error) {
+	if !s.hashSlots.TryAcquire(1) {
+		slog.Error("password hash slots exhausted, consider increasing MaxConcurrentHashes", "op", "verify")
+		return false, ErrHashingBusy // Ideally this never happens. Fail hard, log, & right size later.
+	}
+	defer s.hashSlots.Release(1)
+
 	ok, err := argon2.VerifyEncoded([]byte(password), []byte(encodedHash))
 	if err != nil {
 		return false, fmt.Errorf("validating password hash: %w", err)
