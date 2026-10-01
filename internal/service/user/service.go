@@ -65,6 +65,8 @@ type UserQueries interface {
 	CreateEmailResetRequest(ctx context.Context, arg db.CreateEmailResetRequestParams) (db.EmailResetRequest, error)
 	ConsumeEmailResetRequest(ctx context.Context, id []byte) (db.EmailResetRequest, error)
 	UpdateEmail(ctx context.Context, arg db.UpdateEmailParams) error
+	DeletePasswordResetRequestsForUser(ctx context.Context, userID int64) error
+	DeleteEmailResetRequestsForUser(ctx context.Context, userID int64) error
 }
 
 type Service struct {
@@ -231,17 +233,16 @@ func (s *Service) ResetPasswordForAuthenticatedUser(ctx context.Context, usr Use
 			return fmt.Errorf("deleting sessions during authenticated password reset: %w", err)
 		}
 
-		return nil
+		return deleteOutstandingResetRequests(ctx, qWithTx, usr.DBUser().ID)
 	})
 	if err != nil {
 		return err
 	}
 
-	s.emailService.SendMail(
-		usr.DBUser().Email,
-		passwordResetCompleteEmailSubject,
-		passwordResetCompleteEmailBody,
-	)
+	err = s.emailService.SendMail(usr.DBUser().Email, passwordResetCompleteEmailSubject, passwordResetCompleteEmailBody)
+	if err != nil {
+		slog.Error("sending password reset notification", "err", err)
+	}
 
 	return nil
 }
@@ -299,7 +300,8 @@ func (s *Service) ResetPasswordFromResetRequest(ctx context.Context, token strin
 
 	sum := sha256.Sum256(resetToken)
 
-	return s.runWithTx(ctx, func(qWithTx UserQueries, sessionsWithTx SessionDeleter) error {
+	var userID int64
+	err = s.runWithTx(ctx, func(qWithTx UserQueries, sessionsWithTx SessionDeleter) error {
 		resetRequest, err := qWithTx.ConsumePasswordResetRequest(ctx, sum[:])
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -334,8 +336,25 @@ func (s *Service) ResetPasswordFromResetRequest(ctx context.Context, token strin
 			return fmt.Errorf("deleting sessions during password reset from token: %w", err)
 		}
 
-		return nil
+		userID = resetRequest.UserID
+		return deleteOutstandingResetRequests(ctx, qWithTx, resetRequest.UserID)
 	})
+	if err != nil {
+		return err
+	}
+
+	usr, err := s.queries.GetUserByID(ctx, userID)
+	if err != nil {
+		slog.Error("getting user for password reset notification", "err", err, "user_id", userID)
+		return nil
+	}
+
+	err = s.emailService.SendMail(usr.Email, passwordResetCompleteEmailSubject, passwordResetCompleteEmailBody)
+	if err != nil {
+		slog.Error("sending password reset notification", "err", err)
+	}
+
+	return nil
 }
 
 func (s *Service) CreateEmailResetRequest(ctx context.Context, usr User, input CreateEmailResetRequestBody) error {
@@ -440,8 +459,24 @@ func (s *Service) ResetEmailFromResetRequest(ctx context.Context, token string) 
 			return fmt.Errorf("deleting sessions during email reset from token: %w", err)
 		}
 
-		return nil
+		return deleteOutstandingResetRequests(ctx, qWithTx, resetRequest.UserID)
 	})
+}
+
+// A credential change must also kill pending resets, otherwise "secure your account" by
+// resetting the password wouldn't stop an attacker's in-flight email change.
+func deleteOutstandingResetRequests(ctx context.Context, q UserQueries, userID int64) error {
+	err := q.DeletePasswordResetRequestsForUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("deleting outstanding password reset requests: %w", err)
+	}
+
+	err = q.DeleteEmailResetRequestsForUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("deleting outstanding email reset requests: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Service) GetUserByID(ctx context.Context, id int64) (User, error) {

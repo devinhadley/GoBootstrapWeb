@@ -8,3 +8,7 @@ RETURNING *;
 DELETE FROM email_reset_requests
 WHERE id = $1
 RETURNING *;
+
+-- name: DeleteEmailResetRequestsForUser :exec
+DELETE FROM email_reset_requests
+WHERE user_id = $1;

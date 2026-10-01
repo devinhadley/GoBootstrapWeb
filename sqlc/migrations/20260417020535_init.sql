@@ -34,12 +34,18 @@ CREATE TABLE password_reset_requests (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX idx_password_reset_requests_user
+ON password_reset_requests(user_id);
+
 CREATE TABLE email_reset_requests (
     id BYTEA PRIMARY KEY CHECK (octet_length(id) = 32), -- SHA-256 of reset token
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     new_email CITEXT NOT NULL CHECK (char_length(new_email) BETWEEN 1 AND 320),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX idx_email_reset_requests_user
+ON email_reset_requests(user_id);
 
 -- +goose Down
 DROP TABLE IF EXISTS email_reset_requests;

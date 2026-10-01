@@ -51,3 +51,13 @@ func (q *Queries) CreateEmailResetRequest(ctx context.Context, arg CreateEmailRe
 	)
 	return i, err
 }
+
+const deleteEmailResetRequestsForUser = `-- name: DeleteEmailResetRequestsForUser :exec
+DELETE FROM email_reset_requests
+WHERE user_id = $1
+`
+
+func (q *Queries) DeleteEmailResetRequestsForUser(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteEmailResetRequestsForUser, userID)
+	return err
+}

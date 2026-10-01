@@ -40,3 +40,13 @@ func (q *Queries) CreatePasswordResetRequest(ctx context.Context, arg CreatePass
 	err := row.Scan(&i.ID, &i.UserID, &i.CreatedAt)
 	return i, err
 }
+
+const deletePasswordResetRequestsForUser = `-- name: DeletePasswordResetRequestsForUser :exec
+DELETE FROM password_reset_requests
+WHERE user_id = $1
+`
+
+func (q *Queries) DeletePasswordResetRequestsForUser(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deletePasswordResetRequestsForUser, userID)
+	return err
+}

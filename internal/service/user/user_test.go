@@ -537,6 +537,14 @@ func (q *mockQueries) UpdateEmail(ctx context.Context, arg db.UpdateEmailParams)
 	return nil
 }
 
+func (q *mockQueries) DeletePasswordResetRequestsForUser(context.Context, int64) error {
+	return nil
+}
+
+func (q *mockQueries) DeleteEmailResetRequestsForUser(context.Context, int64) error {
+	return nil
+}
+
 type mockSessionDeleter struct{}
 
 func (mockSessionDeleter) DeleteAllSessionsForUser(context.Context, int64) error {
