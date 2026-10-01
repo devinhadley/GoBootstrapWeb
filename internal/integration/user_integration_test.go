@@ -499,6 +499,7 @@ func testAuthenticatedPasswordResetSucceeds(t *testing.T) {
 	newPassword := "new-password-12345"
 
 	createdUser, sessionCookie := signUpWithSessions(t, deps, email, currentPassword, 3)
+	seedPendingResetRequests(t, deps, createdUser.DBUser().ID)
 
 	rec := performJsonRequest(deps.handler, http.MethodPut, "/user/password", map[string]string{
 		"password":    currentPassword,
@@ -538,6 +539,8 @@ func testAuthenticatedPasswordResetSucceeds(t *testing.T) {
 	if activeCountAfter != 0 {
 		t.Fatalf("got %d active sessions after reset, want 0", activeCountAfter)
 	}
+
+	assertNoPendingResetRequests(t, deps.pool, createdUser.DBUser().ID)
 }
 
 func testAuthenticatedPasswordResetFailsWithWrongPassword(t *testing.T) {
@@ -745,10 +748,25 @@ func testPasswordResetSucceedsWithValidResetTokenAndDeletesSessions(t *testing.T
 		t.Fatalf("failed to extract reset token from email body %q", deps.emailService.Emails[0].Body)
 	}
 
+	seedPendingResetRequests(t, deps, createdUser.DBUser().ID)
+
 	rec := performJsonRequest(deps.handler, http.MethodPut, "/password-reset?token="+resetToken, map[string]string{
 		"newPassword": newPassword,
 	})
 	assertStatus(t, rec, http.StatusNoContent)
+
+	if len(deps.emailService.Emails) != 2 {
+		t.Fatalf("got %d sent emails, want %d", len(deps.emailService.Emails), 2)
+	}
+	notification := deps.emailService.Emails[1]
+	if notification.ToEmail != email {
+		t.Fatalf("got notification recipient %q, want %q", notification.ToEmail, email)
+	}
+	if notification.Subject != "Your Password Was Reset" {
+		t.Fatalf("got notification subject %q, want %q", notification.Subject, "Your Password Was Reset")
+	}
+
+	assertNoPendingResetRequests(t, deps.pool, createdUser.DBUser().ID)
 
 	userAfterPassReset, err := deps.queries.GetUserByEmail(ctx, email)
 	if err != nil {
@@ -981,8 +999,12 @@ func testEmailResetConfirmSucceeds(t *testing.T) {
 		t.Fatalf("failed to extract reset token from email body %q", deps.emailService.Emails[0].Body)
 	}
 
+	seedPendingResetRequests(t, deps, createdUser.DBUser().ID)
+
 	confirmRec := performJsonRequest(deps.handler, http.MethodPut, "/email-reset?token="+resetToken, nil)
 	assertStatus(t, confirmRec, http.StatusNoContent)
+
+	assertNoPendingResetRequests(t, deps.pool, createdUser.DBUser().ID)
 
 	if _, err := deps.queries.GetUserByEmail(ctx, newEmail); err != nil {
 		t.Fatalf("failed to fetch user by new email after confirm: %v", err)
@@ -1541,6 +1563,42 @@ func countEmailResetRequestsByUserID(t *testing.T, pool *pgxpool.Pool, userID in
 	}
 
 	return count
+}
+
+// Simulates other in-flight resets (e.g. an attacker's pending email change) that a credential change must invalidate.
+func seedPendingResetRequests(t *testing.T, deps userIntegrationDeps, userID int64) {
+	t.Helper()
+	ctx := context.Background()
+
+	passwordTokenHash := sha256.Sum256([]byte("pending-password-reset"))
+	_, err := deps.queries.CreatePasswordResetRequest(ctx, db.CreatePasswordResetRequestParams{
+		ID:     passwordTokenHash[:],
+		UserID: userID,
+	})
+	if err != nil {
+		t.Fatalf("failed to seed pending password reset request: %v", err)
+	}
+
+	emailTokenHash := sha256.Sum256([]byte("pending-email-reset"))
+	_, err = deps.queries.CreateEmailResetRequest(ctx, db.CreateEmailResetRequestParams{
+		ID:       emailTokenHash[:],
+		UserID:   userID,
+		NewEmail: "pending-email-reset@example.com",
+	})
+	if err != nil {
+		t.Fatalf("failed to seed pending email reset request: %v", err)
+	}
+}
+
+func assertNoPendingResetRequests(t *testing.T, pool *pgxpool.Pool, userID int64) {
+	t.Helper()
+
+	if count := countPasswordResetRequestsByUserID(t, pool, userID); count != 0 {
+		t.Fatalf("got %d pending password reset requests after credential change, want 0", count)
+	}
+	if count := countEmailResetRequestsByUserID(t, pool, userID); count != 0 {
+		t.Fatalf("got %d pending email reset requests after credential change, want 0", count)
+	}
 }
 
 func countPasswordResetRequests(t *testing.T, pool *pgxpool.Pool) int {
