@@ -204,7 +204,7 @@ func (s *Service) LogIn(ctx context.Context, input AuthenticateBody) (User, erro
 }
 
 func (s *Service) ResetPasswordForAuthenticatedUser(ctx context.Context, usr User, input AuthenticatedPasswordResetBody) error {
-	err := s.verifyReauthentication(ctx, usr, input.Password)
+	err := s.verifyReauthentication(usr, input.Password)
 	if err != nil {
 		return err
 	}
@@ -365,7 +365,7 @@ func (s *Service) CreateEmailResetRequest(ctx context.Context, usr User, input C
 
 	currentEmail := usr.DBUser().Email
 
-	err := s.verifyReauthentication(ctx, usr, input.Password)
+	err := s.verifyReauthentication(usr, input.Password)
 	if err != nil {
 		return err
 	}
@@ -463,8 +463,6 @@ func (s *Service) ResetEmailFromResetRequest(ctx context.Context, token string) 
 	})
 }
 
-// A credential change must also kill pending resets, otherwise "secure your account" by
-// resetting the password wouldn't stop an attacker's in-flight email change.
 func deleteOutstandingResetRequests(ctx context.Context, q UserQueries, userID int64) error {
 	err := q.DeletePasswordResetRequestsForUser(ctx, userID)
 	if err != nil {
@@ -522,7 +520,7 @@ func (s *Service) isValidPassword(password string) error {
 	return nil
 }
 
-func (s *Service) verifyReauthentication(ctx context.Context, usr User, password string) error {
+func (s *Service) verifyReauthentication(usr User, password string) error {
 	ok, err := s.verifyPassword(password, usr.DBUser().PasswordHash)
 	if err != nil {
 		return err
